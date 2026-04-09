@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>deadp0et | encrypted messaging</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="noise"></div>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">deadp0et</p>
+      <h1>Encrypted messages that stay readable only to the people holding the phrase.</h1>
+      <p class="lede">
+        This prototype encrypts text in the browser with AES-GCM, derives a key from a shared passphrase,
+        and packages the result into a portable block you can copy anywhere.
+      </p>
+      <div class="hero-meta">
+        <span>browser-side encryption</span>
+        <span>portable ciphertext</span>
+        <span>zero backend required</span>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <div class="card-heading">
+          <h2>Seal a message</h2>
+          <p>Turn plain text into a shareable encrypted payload.</p>
+        </div>
+
+        <label for="compose-passphrase">Shared passphrase</label>
+        <input id="compose-passphrase" type="password" placeholder="Enter a strong passphrase">
+
+        <label for="compose-message">Message</label>
+        <textarea id="compose-message" rows="8" placeholder="Write what only the intended recipient should read."></textarea>
+
+        <div class="actions">
+          <button id="encrypt-button" class="primary">Encrypt</button>
+          <button id="copy-button" class="secondary" disabled>Copy payload</button>
+        </div>
+
+        <label for="encrypted-output">Encrypted payload</label>
+        <textarea id="encrypted-output" rows="9" readonly placeholder="Encrypted content will appear here."></textarea>
+      </article>
+
+      <article class="card">
+        <div class="card-heading">
+          <h2>Open a message</h2>
+          <p>Decrypt a payload with the same passphrase used to seal it.</p>
+        </div>
+
+        <label for="decrypt-passphrase">Shared passphrase</label>
+        <input id="decrypt-passphrase" type="password" placeholder="Enter the matching passphrase">
+
+        <label for="encrypted-input">Encrypted payload</label>
+        <textarea id="encrypted-input" rows="8" placeholder='Paste a payload that starts with {"v":1,...}'></textarea>
+
+        <div class="actions">
+          <button id="decrypt-button" class="primary">Decrypt</button>
+          <button id="sample-button" class="secondary">Load sample</button>
+        </div>
+
+        <label for="decrypted-output">Recovered message</label>
+        <textarea id="decrypted-output" rows="9" readonly placeholder="Decrypted text will appear here."></textarea>
+      </article>
+    </section>
+
+    <footer class="footer">
+      <p id="status" aria-live="polite">Ready.</p>
+      <p class="footnote">For real production use, we would add identity verification, device trust, and audited protocol design.</p>
+    </footer>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
