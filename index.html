@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>deadp0et | encrypted messaging</title>
+  <title>deadp0et | secure messaging protocol</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -13,66 +13,140 @@
   <div class="noise"></div>
   <main class="shell">
     <section class="hero">
-      <p class="eyebrow">deadp0et</p>
-      <h1>Encrypted messages that stay readable only to the people holding the phrase.</h1>
+      <p class="eyebrow">deadp0et protocol v0</p>
+      <h1>Accounts, device keys, and server-assisted encrypted delivery.</h1>
       <p class="lede">
-        This prototype encrypts text in the browser with AES-GCM, derives a key from a shared passphrase,
-        and packages the result into a portable block you can copy anywhere.
+        This version models the real secure-messaging shape: users sign up, devices generate key material
+        locally, the server stores public keys and opaque message envelopes, and only recipient devices can
+        decrypt message bodies.
       </p>
       <div class="hero-meta">
-        <span>browser-side encryption</span>
-        <span>portable ciphertext</span>
-        <span>zero backend required</span>
+        <span>end-to-end encrypted envelopes</span>
+        <span>server stores ciphertext only</span>
+        <span>device identity plus signed prekeys</span>
       </div>
     </section>
 
-    <section class="grid">
-      <article class="card">
-        <div class="card-heading">
-          <h2>Seal a message</h2>
-          <p>Turn plain text into a shareable encrypted payload.</p>
+    <section class="dashboard">
+      <article class="panel account-panel">
+        <div class="panel-heading">
+          <h2>Account</h2>
+          <p>Create a user and generate local device keys.</p>
         </div>
 
-        <label for="compose-passphrase">Shared passphrase</label>
-        <input id="compose-passphrase" type="password" placeholder="Enter a strong passphrase">
-
-        <label for="compose-message">Message</label>
-        <textarea id="compose-message" rows="8" placeholder="Write what only the intended recipient should read."></textarea>
+        <div class="form-grid">
+          <div>
+            <label for="signup-username">Username</label>
+            <input id="signup-username" type="text" placeholder="iris">
+          </div>
+          <div>
+            <label for="signup-password">Password</label>
+            <input id="signup-password" type="password" placeholder="Choose a strong password">
+          </div>
+        </div>
 
         <div class="actions">
-          <button id="encrypt-button" class="primary">Encrypt</button>
-          <button id="copy-button" class="secondary" disabled>Copy payload</button>
+          <button id="signup-button" class="primary">Create account</button>
+          <button id="login-button" class="secondary">Sign in</button>
+          <button id="bootstrap-button" class="secondary">Load demo users</button>
         </div>
 
-        <label for="encrypted-output">Encrypted payload</label>
-        <textarea id="encrypted-output" rows="9" readonly placeholder="Encrypted content will appear here."></textarea>
+        <div class="stack">
+          <label for="session-output">Session snapshot</label>
+          <textarea id="session-output" rows="10" readonly placeholder="Local account and device state will appear here."></textarea>
+        </div>
       </article>
 
-      <article class="card">
-        <div class="card-heading">
-          <h2>Open a message</h2>
-          <p>Decrypt a payload with the same passphrase used to seal it.</p>
+      <article class="panel">
+        <div class="panel-heading">
+          <h2>Directory</h2>
+          <p>The server exposes usernames and public key bundles, never plaintext.</p>
         </div>
 
-        <label for="decrypt-passphrase">Shared passphrase</label>
-        <input id="decrypt-passphrase" type="password" placeholder="Enter the matching passphrase">
+        <label for="directory-output">Registered users</label>
+        <textarea id="directory-output" rows="12" readonly placeholder="No registered users yet."></textarea>
+      </article>
+    </section>
 
-        <label for="encrypted-input">Encrypted payload</label>
-        <textarea id="encrypted-input" rows="8" placeholder='Paste a payload that starts with {"v":1,...}'></textarea>
+    <section class="dashboard">
+      <article class="panel">
+        <div class="panel-heading">
+          <h2>Compose</h2>
+          <p>Fetch the recipient prekey bundle, derive a session secret, and send an encrypted envelope.</p>
+        </div>
+
+        <div class="form-grid">
+          <div>
+            <label for="recipient-username">Recipient</label>
+            <input id="recipient-username" type="text" placeholder="noor">
+          </div>
+          <div>
+            <label for="message-subject">Subject</label>
+            <input id="message-subject" type="text" placeholder="First secure hello">
+          </div>
+        </div>
+
+        <label for="message-body">Message body</label>
+        <textarea id="message-body" rows="8" placeholder="Write a message. The server will only store its encrypted envelope."></textarea>
 
         <div class="actions">
-          <button id="decrypt-button" class="primary">Decrypt</button>
-          <button id="sample-button" class="secondary">Load sample</button>
+          <button id="send-button" class="primary">Encrypt and send</button>
+          <button id="copy-envelope-button" class="secondary" disabled>Copy last envelope</button>
         </div>
 
-        <label for="decrypted-output">Recovered message</label>
-        <textarea id="decrypted-output" rows="9" readonly placeholder="Decrypted text will appear here."></textarea>
+        <label for="envelope-output">Last encrypted envelope</label>
+        <textarea id="envelope-output" rows="12" readonly placeholder="Encrypted message envelope will appear here."></textarea>
+      </article>
+
+      <article class="panel">
+        <div class="panel-heading">
+          <h2>Inbox</h2>
+          <p>Decrypt messages addressed to the current account using local private keys.</p>
+        </div>
+
+        <div class="actions">
+          <button id="refresh-inbox-button" class="primary">Refresh inbox</button>
+          <button id="decrypt-selected-button" class="secondary">Decrypt latest</button>
+        </div>
+
+        <label for="inbox-output">Encrypted inbox feed</label>
+        <textarea id="inbox-output" rows="9" readonly placeholder="Fetched message envelopes will appear here."></textarea>
+
+        <label for="plaintext-output">Recovered plaintext</label>
+        <textarea id="plaintext-output" rows="8" readonly placeholder="Decrypted message content will appear here."></textarea>
+      </article>
+    </section>
+
+    <section class="dashboard single">
+      <article class="panel">
+        <div class="panel-heading">
+          <h2>Protocol blueprint</h2>
+          <p>What the app and server agree on for production.</p>
+        </div>
+        <div class="spec-grid">
+          <div class="spec-card">
+            <h3>Identity</h3>
+            <p>Each device creates an ECDH identity key pair and a signed prekey locally. The server stores only the public bundle.</p>
+          </div>
+          <div class="spec-card">
+            <h3>Authentication</h3>
+            <p>Passwords authenticate to the service. Device private keys stay in the browser and should later be hardware-backed when available.</p>
+          </div>
+          <div class="spec-card">
+            <h3>Transport</h3>
+            <p>Messages are sealed with AES-GCM using a shared secret derived from sender ephemeral keys and recipient prekeys.</p>
+          </div>
+          <div class="spec-card">
+            <h3>Server role</h3>
+            <p>The server delivers envelopes, tracks nonces and timestamps, and cannot read subjects or bodies after encryption is applied client-side.</p>
+          </div>
+        </div>
       </article>
     </section>
 
     <footer class="footer">
-      <p id="status" aria-live="polite">Ready.</p>
-      <p class="footnote">For real production use, we would add identity verification, device trust, and audited protocol design.</p>
+      <p id="status" aria-live="polite">Ready to model account creation and encrypted delivery.</p>
+      <p class="footnote">This is a browser-side protocol prototype. Production rollout still needs audited crypto, authenticated sessions, persistence, and multi-device controls.</p>
     </footer>
   </main>
 

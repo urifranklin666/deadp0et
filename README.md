@@ -1,30 +1,48 @@
 # deadp0et
 
-`deadp0et` is a sleek prototype for secure encrypted messaging. The first version is intentionally simple:
-it encrypts and decrypts messages directly in the browser using the Web Crypto API, packages ciphertext as
-JSON, and avoids any server dependency.
+`deadp0et` is evolving from a passphrase demo into a real secure-messaging architecture. This revision adds a
+browser-based protocol prototype for account creation, public key registration, encrypted message envelopes, and
+server-assisted delivery that keeps plaintext on client devices.
 
-## What it does today
+## What this version includes
 
-- Encrypts plaintext with AES-GCM in the browser
-- Derives keys from a shared passphrase using PBKDF2-SHA-256
-- Produces a portable payload that can be pasted into any transport channel
-- Decrypts matching payloads locally with the same passphrase
+- Account creation and sign-in flows modeled in the browser
+- Local generation of per-device ECDH identity keys and signed prekeys
+- Recipient directory records that expose only public bundles
+- Encrypted message envelopes sent through a simulated server mailbox
+- Local decryption of inbox messages addressed to the signed-in user
+- Protocol and server API documentation in [`docs/protocol.md`](./docs/protocol.md) and [`docs/api-contract.md`](./docs/api-contract.md)
 
-## Why this shape
+## Security shape
 
-This is a good starting point for a secure-messaging product because it lets us validate the user
-experience first while keeping the cryptography local and inspectable
+The current design aims for this trust model:
 
+- The server knows usernames, device ids, and message routing metadata
+- The server stores public keys and opaque ciphertext envelopes
+- The sender encrypts before upload
+- The recipient decrypts after download
+- Private device keys stay local to the client
 
-It is a prototype, not a full secure messaging system yet.
+## Important caveat
 
+This is still a prototype. It demonstrates the product and protocol direction, but it is not yet a hardened
+production messenger. To get there, we still need:
 
-## Production roadmap
-
-Before calling this production-grade, we would want:
-
-- Verified user identity and device trust
-- A protocol designed for forward secrecy and message authenticity
-- A backend for encrypted mailbox delivery, sync, and key distribution
+- A proper backend with persistent storage and authenticated sessions
+- A real registration and login flow with hardened password handling
+- X3DH or an equivalent audited handshake
+- A Double Ratchet or equivalent per-message ratchet
+- Multi-device enrollment and revocation
 - Security review and independent cryptographic audit
+
+## Files
+
+- `index.html` and `styles.css`: product UI for account, directory, compose, and inbox flows
+- `app.js`: browser-side protocol prototype and simulated server behavior
+- `docs/protocol.md`: protocol design draft
+- `docs/api-contract.md`: backend API contract
+
+## Next milestone
+
+The next strong move is building the actual backend service that matches the API contract while keeping all
+message encryption and decryption inside the client.
