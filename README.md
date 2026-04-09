@@ -13,14 +13,12 @@ JSON, and avoids any server dependency.
 
 ## Why this shape
 
-This repository is a good starting point for a secure-messaging product because it lets us validate the user
-experience first while keeping the cryptography local and inspectable. It is a prototype, not a full secure
-messaging system yet.
+This is a good starting point for a secure-messaging product because it lets us validate the user
+experience first while keeping the cryptography local and inspectable
 
-## Running locally
 
-Because this is a static app, you can open `index.html` directly in a modern browser or serve the folder with
-any static file server.
+It is a prototype, not a full secure messaging system yet.
+
 
 ## Production roadmap
 
@@ -30,11 +28,3 @@ Before calling this production-grade, we would want:
 - A protocol designed for forward secrecy and message authenticity
 - A backend for encrypted mailbox delivery, sync, and key distribution
 - Security review and independent cryptographic audit
-
-## Repository starter
-
-Suggested next steps after the initial commit:
-
-1. Push this project to a private GitHub repository named `deadp0et`
-2. Add an issue tracker for roadmap items
-3. Decide whether the next milestone is a richer front end, a backend, or a real messaging protocol
