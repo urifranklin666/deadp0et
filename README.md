@@ -78,6 +78,15 @@ That means local testing can happen at a single origin, usually `http://127.0.0.
 The frontend defaults its API base to `window.location.origin`, so when served through
 `https://deadp0et.deadplug.digital` it will automatically talk to the correct proxied backend endpoint.
 
+### Test it
+
+```bash
+npm test
+```
+
+The test suite uses Node's built-in `node:test` runner and exercises the backend over real HTTP requests with an
+isolated temporary data directory.
+
 ### Docker deployment
 
 This repo now includes:

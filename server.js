@@ -5,8 +5,8 @@ const crypto = require("crypto");
 
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 3000);
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const DATA_DIR = path.join(__dirname, "data");
+const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 7 * 24 * 60 * 60 * 1000);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 const STATIC_FILES = {
   "/": { filePath: path.join(__dirname, "index.html"), contentType: "text/html; charset=utf-8" },
@@ -29,10 +29,6 @@ function randomId() {
 
 function randomToken() {
   return crypto.randomBytes(32).toString("hex");
-}
-
-function hashString(value) {
-  return crypto.createHash("sha256").update(value).digest("hex");
 }
 
 function deriveVerifierRecord(passwordVerifier) {
