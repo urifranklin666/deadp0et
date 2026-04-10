@@ -1,0 +1,11 @@
+{
+  "name": "deadp0et",
+  "version": "0.1.0",
+  "private": true,
+  "description": "deadp0et secure messaging backend prototype",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "check": "node --check server.js"
+  }
+}

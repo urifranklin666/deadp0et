@@ -1,0 +1,18 @@
+services:
+  deadp0et:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: deadp0et
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3000
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true

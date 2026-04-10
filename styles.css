@@ -1,18 +1,22 @@
 :root {
-  --bg: #071116;
-  --panel: rgba(9, 21, 29, 0.86);
-  --panel-strong: rgba(9, 19, 26, 0.96);
-  --line: rgba(134, 215, 191, 0.16);
-  --line-strong: rgba(134, 215, 191, 0.3);
-  --text: #edf7f4;
-  --muted: #9ab6ae;
-  --accent: #7ef0bf;
-  --accent-strong: #54d49f;
-  --danger: #ff9a9a;
-  --shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+  --red: #cc0000;
+  --red-bright: #ff2222;
+  --red-dim: #880000;
+  --bg: #0a0a0a;
+  --bg-card: #111111;
+  --bg-card-hover: #1a0000;
+  --border: #2a0000;
+  --border-strong: #4d0000;
+  --text: #e0e0e0;
+  --text-dim: #888888;
+  --success: #ff6666;
+  --danger: #ff8f8f;
+  --shadow: 0 14px 44px rgba(0, 0, 0, 0.34);
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -20,85 +24,75 @@ html,
 body {
   margin: 0;
   min-height: 100%;
-  font-family: "Space Grotesk", sans-serif;
-  background:
-    radial-gradient(circle at top left, rgba(126, 240, 191, 0.14), transparent 28%),
-    radial-gradient(circle at 85% 15%, rgba(83, 124, 255, 0.18), transparent 24%),
-    linear-gradient(165deg, #071116 0%, #0a141b 46%, #04070c 100%);
-  color: var(--text);
 }
 
 body {
-  position: relative;
-}
-
-.noise {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.18;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-  background-size: 72px 72px;
-  mask-image: radial-gradient(circle at center, black 44%, transparent 100%);
+  background:
+    radial-gradient(circle at top center, rgba(204, 0, 0, 0.12), transparent 28%),
+    linear-gradient(180deg, #0a0a0a 0%, #090909 100%);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 
 .shell {
-  width: min(1240px, calc(100vw - 28px));
+  width: min(1100px, calc(100vw - 28px));
   margin: 0 auto;
-  padding: 36px 0 32px;
+  padding: 32px 0 36px;
 }
 
 .hero,
 .panel {
-  border: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(14, 29, 38, 0.93), rgba(8, 18, 24, 0.82));
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
   box-shadow: var(--shadow);
-  backdrop-filter: blur(14px);
 }
 
 .hero {
-  padding: 30px;
-  border-radius: 28px;
+  padding: 28px;
+  text-align: center;
 }
 
 .eyebrow {
-  margin: 0 0 14px;
-  color: var(--accent);
+  margin: 0;
+  color: var(--red-bright);
+  font-size: 0.8rem;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  letter-spacing: 0.26em;
-  font: 500 0.72rem "IBM Plex Mono", monospace;
 }
 
 .hero h1 {
-  margin: 0;
-  max-width: 13ch;
-  font-size: clamp(2.5rem, 5vw, 5.3rem);
-  line-height: 0.95;
+  margin: 14px auto 0;
+  max-width: 14ch;
+  color: #ffffff;
+  font-size: clamp(2.2rem, 5vw, 4.4rem);
+  line-height: 0.96;
 }
 
 .lede {
-  max-width: 70ch;
-  margin: 20px 0 0;
-  color: var(--muted);
+  max-width: 72ch;
+  margin: 16px auto 0;
+  color: var(--text-dim);
   line-height: 1.7;
 }
 
 .hero-meta {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
-  margin-top: 22px;
+  margin-top: 20px;
 }
 
 .hero-meta span {
-  border: 1px solid var(--line);
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
-  padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--muted);
-  font: 500 0.78rem "IBM Plex Mono", monospace;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .dashboard {
@@ -108,13 +102,13 @@ body {
   margin-top: 18px;
 }
 
-.dashboard.single {
+.dashboard-wide,
+.dashboard-single {
   grid-template-columns: 1fr;
 }
 
 .panel {
-  padding: 24px;
-  border-radius: 24px;
+  padding: 22px;
 }
 
 .panel-heading h2,
@@ -124,51 +118,70 @@ body {
   margin: 0;
 }
 
+.panel-heading h2 {
+  color: #ffffff;
+  font-size: 1.15rem;
+}
+
 .panel-heading p {
   margin-top: 6px;
-  color: var(--muted);
+  color: var(--text-dim);
+  line-height: 1.5;
 }
 
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+}
+
+.inline-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
   margin-top: 14px;
 }
 
-.stack {
-  margin-top: 18px;
+.inline-row input {
+  flex: 1 1 360px;
 }
 
 label {
   display: block;
   margin: 18px 0 8px;
-  color: #d9e9e4;
-  font: 500 0.88rem "IBM Plex Mono", monospace;
+  color: #ffffff;
+  font-size: 0.83rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 input,
 textarea {
   width: 100%;
-  border-radius: 16px;
-  border: 1px solid rgba(176, 232, 220, 0.12);
-  background: var(--panel-strong);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: #0d0d0d;
   color: var(--text);
-  padding: 14px 16px;
+  padding: 13px 14px;
   font: inherit;
   outline: none;
-  transition: border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #6f6f6f;
 }
 
 input:focus,
 textarea:focus {
-  border-color: var(--line-strong);
-  box-shadow: 0 0 0 4px rgba(126, 240, 191, 0.08);
-  transform: translateY(-1px);
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(204, 0, 0, 0.14);
 }
 
 textarea {
   resize: vertical;
+  line-height: 1.5;
 }
 
 .actions {
@@ -180,12 +193,12 @@ textarea {
 
 button {
   appearance: none;
-  border: 0;
-  border-radius: 999px;
-  padding: 12px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 12px 16px;
   cursor: pointer;
-  font: 700 0.92rem "Space Grotesk", sans-serif;
-  transition: transform 180ms ease, opacity 180ms ease, box-shadow 180ms ease;
+  font: 600 0.94rem "Segoe UI", system-ui, -apple-system, sans-serif;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
 button:hover {
@@ -193,21 +206,26 @@ button:hover {
 }
 
 button:disabled {
-  opacity: 0.46;
+  opacity: 0.45;
   cursor: not-allowed;
   transform: none;
 }
 
 .primary {
-  background: linear-gradient(135deg, var(--accent) 0%, #a6fdff 100%);
-  color: #071116;
-  box-shadow: 0 10px 26px rgba(126, 240, 191, 0.18);
+  background: linear-gradient(180deg, var(--red) 0%, #9f0000 100%);
+  border-color: var(--red);
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(204, 0, 0, 0.18);
 }
 
 .secondary {
-  background: rgba(255, 255, 255, 0.05);
+  background: #121212;
   color: var(--text);
-  border: 1px solid var(--line);
+}
+
+.secondary:hover {
+  border-color: var(--red);
+  background: var(--bg-card-hover);
 }
 
 .spec-grid {
@@ -218,39 +236,46 @@ button:disabled {
 }
 
 .spec-card {
-  border: 1px solid var(--line);
-  border-radius: 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
   padding: 16px;
-  background: rgba(255, 255, 255, 0.03);
+  background: #0d0d0d;
+}
+
+.spec-card h3 {
+  color: #ffffff;
+  font-size: 0.96rem;
 }
 
 .spec-card p {
   margin-top: 8px;
-  color: var(--muted);
-  line-height: 1.55;
+  color: var(--text-dim);
+  line-height: 1.6;
+  font-size: 0.92rem;
 }
 
 .footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 20px;
-  margin-top: 18px;
-  padding: 0 4px;
+  gap: 18px;
+  margin-top: 20px;
+  color: var(--text-dim);
 }
 
 #status {
   margin: 0;
-  color: var(--accent);
-  font: 500 0.88rem "IBM Plex Mono", monospace;
+  color: var(--success);
+  font-size: 0.86rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .footnote {
   margin: 0;
-  max-width: 64ch;
+  max-width: 60ch;
   text-align: right;
-  color: var(--muted);
-  font-size: 0.92rem;
+  font-size: 0.9rem;
 }
 
 @media (max-width: 980px) {
@@ -272,17 +297,17 @@ button:disabled {
 
 @media (max-width: 640px) {
   .shell {
-    width: min(100vw - 18px, 1240px);
+    width: min(100vw - 18px, 1100px);
     padding-top: 18px;
   }
 
   .hero,
   .panel {
     padding: 18px;
-    border-radius: 20px;
   }
 
-  .actions {
+  .actions,
+  .inline-row {
     flex-direction: column;
   }
 

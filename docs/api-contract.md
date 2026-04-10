@@ -26,7 +26,9 @@ Response:
   "accountId": "uuid",
   "username": "iris",
   "session": {
-    "accessToken": "opaque-token"
+    "accessToken": "opaque-token",
+    "deviceId": "uuid",
+    "expiresAt": "2026-04-17T00:00:00.000Z"
   }
 }
 ```
@@ -77,6 +79,20 @@ Request:
 ## `GET /v1/messages/inbox`
 
 Returns message envelopes addressed to the authenticated device or account.
+
+Response fields may include delivery metadata such as `deliveredAt`, `readAt`, and `deliveryCount`.
+
+## `POST /v1/messages/inbox/ack`
+
+Marks one or more inbox messages as read for the authenticated device.
+
+Request:
+
+```json
+{
+  "messageIds": ["uuid"]
+}
+```
 
 ## `POST /v1/devices`
 

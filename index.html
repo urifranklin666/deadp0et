@@ -3,35 +3,49 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>deadp0et | secure messaging protocol</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <title>deadp0et | secure messaging</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <div class="noise"></div>
   <main class="shell">
-    <section class="hero">
-      <p class="eyebrow">deadp0et protocol v0</p>
-      <h1>Accounts, device keys, and server-assisted encrypted delivery.</h1>
+    <header class="hero">
+      <p class="eyebrow">deadplug.digital / secure messaging</p>
+      <h1>Encrypted delivery with a real backend and local device keys.</h1>
       <p class="lede">
-        This version models the real secure-messaging shape: users sign up, devices generate key material
-        locally, the server stores public keys and opaque message envelopes, and only recipient devices can
-        decrypt message bodies.
+        This frontend now talks to the live `deadp0et` API for accounts, sessions, bundle lookup, and ciphertext
+        delivery. The browser still generates device keys locally and decrypts envelopes on-device.
       </p>
       <div class="hero-meta">
-        <span>end-to-end encrypted envelopes</span>
-        <span>server stores ciphertext only</span>
-        <span>device identity plus signed prekeys</span>
+        <span>dark red deadplug style</span>
+        <span>backend-backed auth and inbox</span>
+        <span>plaintext stays client-side</span>
       </div>
+    </header>
+
+    <section class="dashboard dashboard-wide">
+      <article class="panel">
+        <div class="panel-heading">
+          <h2>Backend</h2>
+          <p>The client defaults to the current origin, which is the correct backend endpoint behind the live proxy.</p>
+        </div>
+
+        <label for="api-base">API base URL</label>
+        <div class="inline-row">
+          <input id="api-base" type="text" placeholder="https://deadp0et.deadplug.digital">
+          <button id="save-api-button" class="secondary">Save endpoint</button>
+          <button id="health-button" class="secondary">Check health</button>
+        </div>
+
+        <label for="health-output">API health</label>
+        <textarea id="health-output" rows="5" readonly placeholder="Health output will appear here."></textarea>
+      </article>
     </section>
 
     <section class="dashboard">
-      <article class="panel account-panel">
+      <article class="panel">
         <div class="panel-heading">
           <h2>Account</h2>
-          <p>Create a user and generate local device keys.</p>
+          <p>Create an account, register this browser as a device, or open a session with an existing local device.</p>
         </div>
 
         <div class="form-grid">
@@ -41,7 +55,7 @@
           </div>
           <div>
             <label for="signup-password">Password</label>
-            <input id="signup-password" type="password" placeholder="Choose a strong password">
+            <input id="signup-password" type="password" placeholder="Use the same password to reopen a local device">
           </div>
         </div>
 
@@ -51,20 +65,23 @@
           <button id="bootstrap-button" class="secondary">Load demo users</button>
         </div>
 
-        <div class="stack">
-          <label for="session-output">Session snapshot</label>
-          <textarea id="session-output" rows="10" readonly placeholder="Local account and device state will appear here."></textarea>
-        </div>
+        <label for="session-output">Session snapshot</label>
+        <textarea id="session-output" rows="11" readonly placeholder="Authenticated account and local device state will appear here."></textarea>
       </article>
 
       <article class="panel">
         <div class="panel-heading">
-          <h2>Directory</h2>
-          <p>The server exposes usernames and public key bundles, never plaintext.</p>
+          <h2>Bundle lookup</h2>
+          <p>Fetch the recipient’s active public device bundles from the backend. There is no full public directory endpoint yet.</p>
         </div>
 
-        <label for="directory-output">Registered users</label>
-        <textarea id="directory-output" rows="12" readonly placeholder="No registered users yet."></textarea>
+        <div class="inline-row">
+          <input id="lookup-username" type="text" placeholder="noor">
+          <button id="lookup-button" class="secondary">Fetch bundles</button>
+        </div>
+
+        <label for="directory-output">Bundle response</label>
+        <textarea id="directory-output" rows="12" readonly placeholder="Recipient public bundles will appear here."></textarea>
       </article>
     </section>
 
@@ -72,7 +89,7 @@
       <article class="panel">
         <div class="panel-heading">
           <h2>Compose</h2>
-          <p>Fetch the recipient prekey bundle, derive a session secret, and send an encrypted envelope.</p>
+          <p>Resolve one active recipient device, derive a shared secret locally, then upload only the ciphertext envelope.</p>
         </div>
 
         <div class="form-grid">
@@ -87,21 +104,21 @@
         </div>
 
         <label for="message-body">Message body</label>
-        <textarea id="message-body" rows="8" placeholder="Write a message. The server will only store its encrypted envelope."></textarea>
+        <textarea id="message-body" rows="8" placeholder="Write a message. The backend will receive only routing metadata and ciphertext."></textarea>
 
         <div class="actions">
           <button id="send-button" class="primary">Encrypt and send</button>
           <button id="copy-envelope-button" class="secondary" disabled>Copy last envelope</button>
         </div>
 
-        <label for="envelope-output">Last encrypted envelope</label>
-        <textarea id="envelope-output" rows="12" readonly placeholder="Encrypted message envelope will appear here."></textarea>
+        <label for="envelope-output">Last stored envelope</label>
+        <textarea id="envelope-output" rows="12" readonly placeholder="The last encrypted envelope sent to the backend will appear here."></textarea>
       </article>
 
       <article class="panel">
         <div class="panel-heading">
           <h2>Inbox</h2>
-          <p>Decrypt messages addressed to the current account using local private keys.</p>
+          <p>Fetch ciphertext for the authenticated device and decrypt locally with the browser’s stored private prekey.</p>
         </div>
 
         <div class="actions">
@@ -113,40 +130,41 @@
         <textarea id="inbox-output" rows="9" readonly placeholder="Fetched message envelopes will appear here."></textarea>
 
         <label for="plaintext-output">Recovered plaintext</label>
-        <textarea id="plaintext-output" rows="8" readonly placeholder="Decrypted message content will appear here."></textarea>
+        <textarea id="plaintext-output" rows="8" readonly placeholder="Locally decrypted message content will appear here."></textarea>
       </article>
     </section>
 
-    <section class="dashboard single">
+    <section class="dashboard dashboard-single">
       <article class="panel">
         <div class="panel-heading">
-          <h2>Protocol blueprint</h2>
-          <p>What the app and server agree on for production.</p>
+          <h2>Operational notes</h2>
+          <p>This client now reflects the backend contract more closely than the original in-browser mock.</p>
         </div>
+
         <div class="spec-grid">
           <div class="spec-card">
-            <h3>Identity</h3>
-            <p>Each device creates an ECDH identity key pair and a signed prekey locally. The server stores only the public bundle.</p>
+            <h3>Local-only secrets</h3>
+            <p>Device private keys are generated in the browser and cached locally so this device can decrypt later.</p>
           </div>
           <div class="spec-card">
-            <h3>Authentication</h3>
-            <p>Passwords authenticate to the service. Device private keys stay in the browser and should later be hardware-backed when available.</p>
+            <h3>Verifier flow</h3>
+            <p>The current prototype sends a SHA-256-derived verifier, not a production-grade PAKE or Argon2id verifier.</p>
           </div>
           <div class="spec-card">
-            <h3>Transport</h3>
-            <p>Messages are sealed with AES-GCM using a shared secret derived from sender ephemeral keys and recipient prekeys.</p>
+            <h3>Device-scoped inbox</h3>
+            <p>The inbox request is bound to the authenticated session’s device so envelope delivery stays per-device.</p>
           </div>
           <div class="spec-card">
-            <h3>Server role</h3>
-            <p>The server delivers envelopes, tracks nonces and timestamps, and cannot read subjects or bodies after encryption is applied client-side.</p>
+            <h3>Current gap</h3>
+            <p>If a browser does not already have the local private keys for an account, it can authenticate but cannot decrypt old messages.</p>
           </div>
         </div>
       </article>
     </section>
 
     <footer class="footer">
-      <p id="status" aria-live="polite">Ready to model account creation and encrypted delivery.</p>
-      <p class="footnote">This is a browser-side protocol prototype. Production rollout still needs audited crypto, authenticated sessions, persistence, and multi-device controls.</p>
+      <p id="status" aria-live="polite">Backend endpoint ready. Create or sign in to an account.</p>
+      <p class="footnote">Prototype backend active. The next major step is stronger verifier handling and multi-device import/export.</p>
     </footer>
   </main>
 

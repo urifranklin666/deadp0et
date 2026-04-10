@@ -46,3 +46,57 @@ production messenger. To get there, we still need:
 
 The next strong move is building the actual backend service that matches the API contract while keeping all
 message encryption and decryption inside the client.
+
+## Backend prototype
+
+This repo now includes a minimal backend in `server.js` that implements the documented API contract with:
+
+- account creation and session issuance
+- public device bundle lookup
+- authenticated device registration and revocation
+- prekey rotation for active devices
+- encrypted envelope delivery to recipient devices
+- delivered and read tracking for inbox messages
+- file-backed persistence in `./data/store.json`
+
+### Run it
+
+```bash
+npm start
+```
+
+The service listens on `http://0.0.0.0:3000` by default. Override with `PORT` or `HOST` if needed.
+
+The backend also serves the browser client directly:
+
+- `GET /` serves `index.html`
+- `GET /app.js` serves the frontend script
+- `GET /styles.css` serves the app stylesheet
+
+That means local testing can happen at a single origin, usually `http://127.0.0.1:3000/`.
+
+The frontend defaults its API base to `window.location.origin`, so when served through
+`https://deadp0et.deadplug.digital` it will automatically talk to the correct proxied backend endpoint.
+
+### Docker deployment
+
+This repo now includes:
+
+- `Dockerfile`
+- `docker-compose.yml`
+
+Start it with:
+
+```bash
+docker compose up -d --build
+```
+
+The container joins the existing external `proxy` network so Nginx Proxy Manager can route a hostname like
+`deadp0et.deadplug.digital` to the upstream container `deadp0et` on port `3000`.
+
+### Notes
+
+- This is still a prototype backend. The browser still submits a simplified `passwordVerifier`, but the server now stores a derived record instead of the raw verifier.
+- Sessions are opaque bearer tokens with a fixed expiration window.
+- It does not decrypt message contents.
+- It is intended to give the frontend a real server surface that matches `docs/api-contract.md`.
