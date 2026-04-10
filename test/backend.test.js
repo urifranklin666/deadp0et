@@ -289,6 +289,15 @@ test("deadp0et supports multi-device registration, prekey rotation, and targeted
   assert.equal(addDevice.status, 201);
   assert.equal(addDevice.body.device.deviceId, "device-iris-2");
 
+  const listedDevices = await requestJson(baseUrl, "/v1/devices", {
+    headers: {
+      Authorization: `Bearer ${create.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(listedDevices.status, 200);
+  assert.equal(listedDevices.body.devices.length, 2);
+
   const bundlesAfterAdd = await requestJson(baseUrl, "/v1/users/iris/bundles");
   assert.equal(bundlesAfterAdd.status, 200);
   assert.equal(bundlesAfterAdd.body.devices.length, 2);

@@ -98,6 +98,10 @@ Request:
 
 Registers an additional device for an authenticated account.
 
+## `GET /v1/devices`
+
+Lists the authenticated account's devices, including revoked devices.
+
 ## `DELETE /v1/devices/:deviceId`
 
 Revokes a device and prevents future deliveries to it.

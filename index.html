@@ -16,7 +16,6 @@
         delivery. The browser still generates device keys locally and decrypts envelopes on-device.
       </p>
       <div class="hero-meta">
-        <span>dark red deadplug style</span>
         <span>backend-backed auth and inbox</span>
         <span>plaintext stays client-side</span>
       </div>
@@ -68,6 +67,11 @@
           <button id="login-button" class="secondary">Sign in</button>
           <button id="bootstrap-button" class="secondary">Load demo users</button>
         </div>
+
+        <label for="local-device-select">Local device for sign-in</label>
+        <select id="local-device-select">
+          <option value="">Use the first local device for this account</option>
+        </select>
 
         <div id="session-summary" class="summary-card empty">No active account session.</div>
 
@@ -154,6 +158,64 @@
         <details class="detail-block">
           <summary>Recovered plaintext</summary>
           <textarea id="plaintext-output" rows="8" readonly placeholder="Locally decrypted message content will appear here."></textarea>
+        </details>
+      </article>
+    </section>
+
+    <section class="dashboard">
+      <article class="panel">
+        <div class="panel-heading">
+          <h2>Devices</h2>
+          <p>Inspect active and revoked devices, register this browser as an additional device, rotate prekeys, or revoke a non-primary device.</p>
+        </div>
+
+        <div class="actions">
+          <button id="refresh-devices-button" class="primary">Refresh devices</button>
+          <button id="add-device-button" class="secondary">Register this browser as another device</button>
+        </div>
+
+        <div id="devices-summary" class="summary-card empty">No device data loaded.</div>
+
+        <div class="form-grid">
+          <div>
+            <label for="device-action-id">Device ID</label>
+            <input id="device-action-id" type="text" placeholder="device-iris-2">
+          </div>
+          <div>
+            <label for="device-action-mode">Device action</label>
+            <select id="device-action-mode">
+              <option value="rotate">Rotate prekeys</option>
+              <option value="revoke">Revoke device</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="apply-device-action-button" class="secondary">Apply device action</button>
+        </div>
+
+        <details class="detail-block">
+          <summary>Raw device list</summary>
+          <textarea id="devices-output" rows="12" readonly placeholder="Account devices will appear here."></textarea>
+        </details>
+      </article>
+
+      <article class="panel">
+        <div class="panel-heading">
+          <h2>Device portability</h2>
+          <p>Export or import local device material explicitly so another browser can authenticate and decrypt for the same device.</p>
+        </div>
+
+        <div id="device-portability-summary" class="summary-card empty">No local device note yet.</div>
+
+        <div class="actions">
+          <button id="export-device-button" class="secondary">Export selected local device</button>
+          <button id="import-device-button" class="secondary">Import device JSON</button>
+        </div>
+
+        <details class="detail-block">
+          <summary>Device portability payload</summary>
+          <textarea id="device-portability-output" rows="8" placeholder="Exported device JSON will appear here, or paste a previously exported device record to import it."></textarea>
         </details>
       </article>
     </section>

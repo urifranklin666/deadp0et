@@ -8,7 +8,8 @@ const state = {
   currentUsername: "",
   lastEnvelope: "",
   inbox: [],
-  lookupCache: null
+  lookupCache: null,
+  devices: []
 };
 
 const signupUsername = document.querySelector("#signup-username");
@@ -41,6 +42,18 @@ const bundleSummary = document.querySelector("#bundle-summary");
 const envelopeSummary = document.querySelector("#envelope-summary");
 const inboxSummary = document.querySelector("#inbox-summary");
 const plaintextSummary = document.querySelector("#plaintext-summary");
+const refreshDevicesButton = document.querySelector("#refresh-devices-button");
+const addDeviceButton = document.querySelector("#add-device-button");
+const applyDeviceActionButton = document.querySelector("#apply-device-action-button");
+const deviceActionId = document.querySelector("#device-action-id");
+const deviceActionMode = document.querySelector("#device-action-mode");
+const devicesOutput = document.querySelector("#devices-output");
+const devicesSummary = document.querySelector("#devices-summary");
+const devicePortabilitySummary = document.querySelector("#device-portability-summary");
+const devicePortabilityOutput = document.querySelector("#device-portability-output");
+const localDeviceSelect = document.querySelector("#local-device-select");
+const exportDeviceButton = document.querySelector("#export-device-button");
+const importDeviceButton = document.querySelector("#import-device-button");
 
 function setStatus(message, type = "info") {
   statusNode.textContent = message;
@@ -94,14 +107,55 @@ function saveLocalDevices(devices) {
   localStorage.setItem(STORAGE_KEYS.localDevices, JSON.stringify(devices));
 }
 
-function getLocalDevice(username) {
-  return loadLocalDevices()[normalizeUsername(username)] || null;
+function makeDeviceStorageKey(username, deviceId) {
+  return `${normalizeUsername(username)}#${deviceId}`;
 }
 
-function storeLocalDevice(username, record) {
+function getLocalDevicesForUsername(username) {
+  const normalized = normalizeUsername(username);
+  return Object.values(loadLocalDevices())
+    .filter((record) => record && normalizeUsername(record.username) === normalized)
+    .sort((left, right) => new Date(left.storedAt || 0).getTime() - new Date(right.storedAt || 0).getTime());
+}
+
+function getLocalDevice(username, deviceId = "") {
   const devices = loadLocalDevices();
-  devices[normalizeUsername(username)] = record;
+  const normalized = normalizeUsername(username);
+
+  if (deviceId) {
+    return devices[makeDeviceStorageKey(normalized, deviceId)] || null;
+  }
+
+  return devices[normalized] || getLocalDevicesForUsername(normalized)[0] || null;
+}
+
+function storeLocalDevice(record) {
+  const devices = loadLocalDevices();
+  devices[makeDeviceStorageKey(record.username, record.deviceId)] = record;
   saveLocalDevices(devices);
+}
+
+function renderLocalDeviceOptions(username = signupUsername.value) {
+  const normalized = normalizeUsername(username);
+  const records = normalized ? getLocalDevicesForUsername(normalized) : [];
+  const selectedValue = localDeviceSelect.value;
+
+  localDeviceSelect.innerHTML = "";
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = records.length
+    ? "Use the first local device for this account"
+    : "No local devices stored for this account";
+  localDeviceSelect.appendChild(defaultOption);
+
+  for (const record of records) {
+    const option = document.createElement("option");
+    option.value = record.deviceId;
+    option.textContent = `${record.deviceId} (${new Date(record.storedAt).toLocaleString()})`;
+    localDeviceSelect.appendChild(option);
+  }
+
+  localDeviceSelect.value = records.some((record) => record.deviceId === selectedValue) ? selectedValue : "";
 }
 
 function setSummary(node, html, empty = false) {
@@ -266,6 +320,41 @@ function renderLookupResult(payload = null) {
   );
 }
 
+function renderDevices(payload = null) {
+  if (!payload) {
+    state.devices = [];
+    devicesOutput.value = "Sign in to inspect account devices.";
+    setSummary(devicesSummary, "No device data loaded.", true);
+    setSummary(devicePortabilitySummary, "No local device note yet.", true);
+    devicePortabilityOutput.value = "Device portability notes will appear here.";
+    return;
+  }
+
+  state.devices = payload.devices || [];
+  devicesOutput.value = JSON.stringify(payload, null, 2);
+
+  const activeDevices = state.devices.filter((device) => !device.revokedAt);
+  const revokedDevices = state.devices.filter((device) => device.revokedAt);
+  setSummary(
+    devicesSummary,
+    `<strong>${activeDevices.length}</strong> active device(s)<br><strong>${revokedDevices.length}</strong> revoked device(s)`
+  );
+
+  const localDeviceId = state.currentUser?.publicBundle?.deviceId;
+  const localDevicePresent = Boolean(localDeviceId && activeDevices.some((device) => device.deviceId === localDeviceId));
+  setSummary(
+    devicePortabilitySummary,
+    localDevicePresent
+      ? `<strong>Local device ready</strong><br>This browser holds the private keys for <strong>${localDeviceId}</strong>.`
+      : "This browser may not hold the private keys for every active device on the account.",
+    !localDevicePresent
+  );
+
+  devicePortabilityOutput.value = localDevicePresent
+    ? `This browser can decrypt envelopes addressed to ${localDeviceId}. Additional devices must generate or import their own private keys locally.`
+    : "Authentication alone is not enough for decryption. A browser can only decrypt messages for devices whose private keys are stored locally.";
+}
+
 function renderSession() {
   if (!state.currentUser) {
     sessionOutput.value = "No active session.";
@@ -406,6 +495,32 @@ async function fetchInbox() {
   }
 }
 
+async function fetchDevices() {
+  if (!state.currentUser) {
+    setStatus("Sign in before loading account devices.", "error");
+    return [];
+  }
+
+  refreshDevicesButton.disabled = true;
+  setStatus(`Fetching devices for ${state.currentUser.username}...`);
+
+  try {
+    const payload = await apiRequest("/v1/devices", {
+      method: "GET",
+      headers: {}
+    });
+    renderDevices(payload);
+    setStatus(`Fetched ${payload.devices.length} device record(s) for ${payload.username}.`);
+    return payload.devices || [];
+  } catch (error) {
+    renderDevices(null);
+    setStatus(error.message, "error");
+    throw error;
+  } finally {
+    refreshDevicesButton.disabled = false;
+  }
+}
+
 async function createAccount() {
   const username = normalizeUsername(signupUsername.value);
   const password = signupPassword.value;
@@ -431,13 +546,15 @@ async function createAccount() {
     });
 
     const localRecord = await serializeLocalDeviceRecord(username, passwordVerifier, payload.accountId, deviceBundle);
-    storeLocalDevice(username, localRecord);
+    storeLocalDevice(localRecord);
+    renderLocalDeviceOptions(username);
     const hydrated = await hydrateLocalDevice(localRecord);
 
     state.currentUser = {
       accountId: payload.accountId,
       username: payload.username,
       session: payload.session,
+      passwordVerifier,
       publicBundle: hydrated.publicBundle,
       privateKeys: hydrated.privateKeys
     };
@@ -445,6 +562,15 @@ async function createAccount() {
 
     renderSession();
     renderInbox([]);
+    renderDevices({
+      username: payload.username,
+      devices: [{
+        ...hydrated.publicBundle,
+        oneTimePrekeys: [],
+        registeredAt: new Date().toISOString(),
+        revokedAt: null
+      }]
+    });
     plaintextOutput.value = "";
     setStatus(`Account ${payload.username} created and this browser registered as device ${payload.session.deviceId}.`);
     return payload;
@@ -470,7 +596,7 @@ async function signIn() {
 
   try {
     const passwordVerifier = await sha256(password);
-    const localRecord = getLocalDevice(username);
+    const localRecord = getLocalDevice(username, localDeviceSelect.value);
 
     if (!localRecord) {
       throw new Error("No local device keys are stored for this account in this browser. Create the account here or import a device before signing in.");
@@ -494,6 +620,7 @@ async function signIn() {
       accountId: payload.accountId,
       username: payload.username,
       session: payload.session,
+      passwordVerifier,
       publicBundle: hydrated.publicBundle,
       privateKeys: hydrated.privateKeys
     };
@@ -501,6 +628,7 @@ async function signIn() {
 
     renderSession();
     plaintextOutput.value = "";
+    await fetchDevices();
     await fetchInbox();
     setStatus(`Signed in as ${payload.username} on local device ${payload.session.deviceId}.`);
     return payload;
@@ -664,6 +792,157 @@ async function copyLastEnvelope() {
   }
 }
 
+async function registerAdditionalDevice() {
+  if (!state.currentUser) {
+    setStatus("Sign in before registering an additional device.", "error");
+    return;
+  }
+
+  addDeviceButton.disabled = true;
+  setStatus("Generating another device bundle in this browser...");
+
+  try {
+    const deviceBundle = await generateDeviceBundle();
+    await apiRequest("/v1/devices", {
+      method: "POST",
+      body: JSON.stringify({
+        device: deviceBundle.publicBundle
+      })
+    });
+
+    const localRecord = await serializeLocalDeviceRecord(
+      state.currentUser.username,
+      state.currentUser.passwordVerifier || "",
+      state.currentUser.accountId,
+      deviceBundle
+    );
+    storeLocalDevice(localRecord);
+    renderLocalDeviceOptions(state.currentUser.username);
+    deviceActionId.value = deviceBundle.publicBundle.deviceId;
+    localDeviceSelect.value = deviceBundle.publicBundle.deviceId;
+    await fetchDevices();
+    setStatus(`Registered additional device ${deviceBundle.publicBundle.deviceId}. Its private keys remain only in this browser unless exported separately.`);
+  } catch (error) {
+    setStatus(error.message, "error");
+    throw error;
+  } finally {
+    addDeviceButton.disabled = false;
+  }
+}
+
+async function applyDeviceAction() {
+  if (!state.currentUser) {
+    setStatus("Sign in before managing devices.", "error");
+    return;
+  }
+
+  const targetDeviceId = deviceActionId.value.trim();
+  const mode = deviceActionMode.value;
+
+  if (!targetDeviceId) {
+    setStatus("Enter a device ID before applying a device action.", "error");
+    return;
+  }
+
+  applyDeviceActionButton.disabled = true;
+  setStatus(`${mode === "rotate" ? "Rotating prekeys for" : "Revoking"} ${targetDeviceId}...`);
+
+  try {
+    if (mode === "rotate") {
+      const deviceBundle = await generateDeviceBundle();
+      await apiRequest("/v1/prekeys/rotate", {
+        method: "POST",
+        body: JSON.stringify({
+          deviceId: targetDeviceId,
+          signedPrekey: deviceBundle.publicBundle.signedPrekey,
+          prekeySignature: deviceBundle.publicBundle.prekeySignature,
+          oneTimePrekeys: []
+        })
+      });
+      setStatus(`Rotated prekeys for device ${targetDeviceId}.`);
+    } else {
+      await apiRequest(`/v1/devices/${encodeURIComponent(targetDeviceId)}`, {
+        method: "DELETE",
+        headers: {}
+      });
+      setStatus(`Revoked device ${targetDeviceId}.`);
+    }
+
+    await fetchDevices();
+  } catch (error) {
+    setStatus(error.message, "error");
+    throw error;
+  } finally {
+    applyDeviceActionButton.disabled = false;
+  }
+}
+
+async function exportSelectedDevice() {
+  const username = normalizeUsername(signupUsername.value || state.currentUser?.username || "");
+  const record = getLocalDevice(username, localDeviceSelect.value);
+
+  if (!record) {
+    setStatus("No local device is selected for export.", "error");
+    return;
+  }
+
+  const payload = JSON.stringify(record, null, 2);
+  devicePortabilityOutput.value = payload;
+  setSummary(
+    devicePortabilitySummary,
+    `<strong>Ready to export</strong><br>Local device <strong>${record.deviceId}</strong> for <strong>${record.username}</strong>`
+  );
+
+  try {
+    await navigator.clipboard.writeText(payload);
+    setStatus(`Exported local device ${record.deviceId} to the portability panel and clipboard.`);
+  } catch (error) {
+    setStatus(`Exported local device ${record.deviceId} to the portability panel.`);
+  }
+}
+
+function validateImportedRecord(record) {
+  if (!record || typeof record !== "object") {
+    throw new Error("Imported device payload must be a JSON object.");
+  }
+  if (!record.username || !record.deviceId || !record.accountId) {
+    throw new Error("Imported device payload is missing username, accountId, or deviceId.");
+  }
+  if (!record.publicBundle || !record.privateKeys) {
+    throw new Error("Imported device payload is missing publicBundle or privateKeys.");
+  }
+  if (!record.privateKeys.identityPrivateKey || !record.privateKeys.signedPrekeyPrivateKey) {
+    throw new Error("Imported device payload is missing private key material.");
+  }
+}
+
+async function importDevicePayload() {
+  const raw = devicePortabilityOutput.value.trim();
+  if (!raw) {
+    setStatus("Paste an exported device payload before importing.", "error");
+    return;
+  }
+
+  let record;
+  try {
+    record = JSON.parse(raw);
+    validateImportedRecord(record);
+  } catch (error) {
+    setStatus(error.message || "Imported device payload is not valid JSON.", "error");
+    throw error;
+  }
+
+  storeLocalDevice(record);
+  signupUsername.value = record.username;
+  renderLocalDeviceOptions(record.username);
+  localDeviceSelect.value = record.deviceId;
+  setSummary(
+    devicePortabilitySummary,
+    `<strong>Imported local device</strong><br><strong>${record.deviceId}</strong> for <strong>${record.username}</strong>`
+  );
+  setStatus(`Imported local device ${record.deviceId} for ${record.username}. Enter the account password to sign in with it.`);
+}
+
 async function bootstrapDemoUsers() {
   bootstrapButton.disabled = true;
   setStatus("Creating demo users iris and noor through the live API...");
@@ -688,6 +967,7 @@ async function bootstrapDemoUsers() {
     messageSubject.value = "First secure hello";
     messageBody.value = "The backend receives only the envelope. This browser retains the private device key.";
     await fetchBundles("noor");
+    await fetchDevices();
     setStatus("Demo users created through the backend. Signed in as iris and ready to send to noor.");
   } catch (error) {
     setStatus(error.message, "error");
@@ -721,6 +1001,26 @@ lookupButton.addEventListener("click", () => {
   fetchBundles().catch((error) => setStatus(error.message, "error"));
 });
 
+refreshDevicesButton.addEventListener("click", () => {
+  fetchDevices().catch((error) => setStatus(error.message, "error"));
+});
+
+addDeviceButton.addEventListener("click", () => {
+  registerAdditionalDevice().catch((error) => setStatus(error.message, "error"));
+});
+
+applyDeviceActionButton.addEventListener("click", () => {
+  applyDeviceAction().catch((error) => setStatus(error.message, "error"));
+});
+
+exportDeviceButton.addEventListener("click", () => {
+  exportSelectedDevice().catch((error) => setStatus(error.message, "error"));
+});
+
+importDeviceButton.addEventListener("click", () => {
+  importDevicePayload().catch((error) => setStatus(error.message, "error"));
+});
+
 sendButton.addEventListener("click", () => {
   sendMessage().catch((error) => setStatus(error.message, "error"));
 });
@@ -737,10 +1037,16 @@ decryptSelectedButton.addEventListener("click", () => {
   decryptLatest().catch((error) => setStatus(error.message, "error"));
 });
 
+signupUsername.addEventListener("input", () => {
+  renderLocalDeviceOptions(signupUsername.value);
+});
+
 apiBaseInput.value = localStorage.getItem(STORAGE_KEYS.apiBase) || getDefaultApiBase();
+renderLocalDeviceOptions("");
 renderLookupResult(null);
 renderSession();
 renderInbox([]);
+renderDevices(null);
 setSummary(healthSummary, "No health check has been run yet.", true);
 setSummary(envelopeSummary, "No envelope has been sent yet.", true);
 setSummary(plaintextSummary, "No message decrypted yet.", true);

@@ -599,6 +599,18 @@ async function handleRegisterDevice(request, response) {
   });
 }
 
+function handleListDevices(request, response) {
+  const auth = requireAuth(request, response);
+  if (!auth) {
+    return;
+  }
+
+  sendJson(response, 200, {
+    username: auth.account.username,
+    devices: auth.account.devices.map(getPublicDeviceBundle)
+  });
+}
+
 function handleDeleteDevice(response, auth, deviceId) {
   const device = auth.account.devices.find((entry) => entry.deviceId === deviceId);
   if (!device) {
@@ -784,11 +796,15 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (pathname === "/v1/devices") {
-      if (request.method !== "POST") {
-        methodNotAllowed(response, request.method);
+      if (request.method === "GET") {
+        handleListDevices(request, response);
         return;
       }
-      await handleRegisterDevice(request, response);
+      if (request.method === "POST") {
+        await handleRegisterDevice(request, response);
+        return;
+      }
+      methodNotAllowed(response, request.method);
       return;
     }
 
