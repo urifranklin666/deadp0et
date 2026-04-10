@@ -111,6 +111,55 @@ body {
   padding: 22px;
 }
 
+.summary-card {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: #0d0d0d;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.summary-card strong {
+  color: #ffffff;
+}
+
+.summary-card.empty {
+  color: var(--text-dim);
+}
+
+.detail-block {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #101010;
+}
+
+.detail-block summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 13px 16px;
+  color: #ffffff;
+  font-size: 0.83rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.detail-block summary::-webkit-details-marker {
+  display: none;
+}
+
+.detail-block[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-block textarea {
+  border: 0;
+  border-radius: 0 0 8px 8px;
+  background: transparent;
+}
+
 .panel-heading h2,
 .panel-heading p,
 .spec-card h3,

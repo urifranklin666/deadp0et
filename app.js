@@ -33,8 +33,14 @@ const apiBaseInput = document.querySelector("#api-base");
 const saveApiButton = document.querySelector("#save-api-button");
 const healthButton = document.querySelector("#health-button");
 const healthOutput = document.querySelector("#health-output");
+const healthSummary = document.querySelector("#health-summary");
 const lookupUsername = document.querySelector("#lookup-username");
 const lookupButton = document.querySelector("#lookup-button");
+const sessionSummary = document.querySelector("#session-summary");
+const bundleSummary = document.querySelector("#bundle-summary");
+const envelopeSummary = document.querySelector("#envelope-summary");
+const inboxSummary = document.querySelector("#inbox-summary");
+const plaintextSummary = document.querySelector("#plaintext-summary");
 
 function setStatus(message, type = "info") {
   statusNode.textContent = message;
@@ -96,6 +102,11 @@ function storeLocalDevice(username, record) {
   const devices = loadLocalDevices();
   devices[normalizeUsername(username)] = record;
   saveLocalDevices(devices);
+}
+
+function setSummary(node, html, empty = false) {
+  node.innerHTML = html;
+  node.classList.toggle("empty", empty);
 }
 
 async function sha256(text) {
@@ -238,11 +249,27 @@ function renderLookupResult(payload = null) {
   directoryOutput.value = payload
     ? JSON.stringify(payload, null, 2)
     : "Use bundle lookup to fetch a recipient's active public keys.";
+
+  if (!payload) {
+    setSummary(bundleSummary, "No recipient bundle loaded.", true);
+    return;
+  }
+
+  const devices = payload.devices || [];
+  const deviceSummary = devices.length
+    ? devices.map((device) => `<strong>${device.deviceId}</strong>`).join(", ")
+    : "none";
+
+  setSummary(
+    bundleSummary,
+    `<strong>${payload.username}</strong><br>${devices.length} active device bundle(s)<br>${deviceSummary}`
+  );
 }
 
 function renderSession() {
   if (!state.currentUser) {
     sessionOutput.value = "No active session.";
+    setSummary(sessionSummary, "No active account session.", true);
     return;
   }
 
@@ -264,12 +291,18 @@ function renderSession() {
       serverVisibility: "account metadata + ciphertext envelope only"
     }
   }, null, 2);
+
+  setSummary(
+    sessionSummary,
+    `<strong>${state.currentUser.username}</strong><br>Device ${state.currentUser.session.deviceId}<br>Session expires ${new Date(state.currentUser.session.expiresAt).toLocaleString()}`
+  );
 }
 
 function renderInbox(messages = null) {
   if (!state.currentUser) {
     state.inbox = [];
     inboxOutput.value = "Sign in to fetch encrypted messages.";
+    setSummary(inboxSummary, "No inbox data loaded.", true);
     return [];
   }
 
@@ -280,6 +313,16 @@ function renderInbox(messages = null) {
   inboxOutput.value = state.inbox.length
     ? JSON.stringify(state.inbox, null, 2)
     : "No encrypted envelopes for this device yet.";
+
+  if (!state.inbox.length) {
+    setSummary(inboxSummary, `No encrypted envelopes for <strong>${state.currentUser.session.deviceId}</strong>.`, true);
+  } else {
+    const latest = state.inbox[state.inbox.length - 1];
+    setSummary(
+      inboxSummary,
+      `<strong>${state.inbox.length}</strong> message(s) for device <strong>${state.currentUser.session.deviceId}</strong><br>Latest from <strong>${latest.from}</strong>`
+    );
+  }
 
   return state.inbox;
 }
@@ -294,10 +337,15 @@ async function fetchHealth() {
       return text ? JSON.parse(text) : {};
     });
     healthOutput.value = JSON.stringify(payload, null, 2);
+    setSummary(
+      healthSummary,
+      `<strong>${payload.status}</strong><br>${payload.accounts} account(s), ${payload.sessions} active session(s), ${payload.messages} message(s)`
+    );
     setStatus(`Backend reachable at ${getApiBase()}.`);
     return payload;
   } catch (error) {
     healthOutput.value = "";
+    setSummary(healthSummary, "Backend health check failed.", true);
     setStatus(`Unable to reach backend at ${getApiBase()}.`, "error");
     throw error;
   } finally {
@@ -550,6 +598,10 @@ async function sendMessage() {
       messageId: stored.messageId
     }, null, 2);
     envelopeOutput.value = state.lastEnvelope;
+    setSummary(
+      envelopeSummary,
+      `<strong>${stored.messageId}</strong><br>Stored for <strong>${bundleResponse.username}</strong> on device <strong>${recipientDevice.deviceId}</strong>`
+    );
     copyEnvelopeButton.disabled = false;
     setStatus(`Encrypted envelope stored for ${bundleResponse.username} on device ${recipientDevice.deviceId}.`);
     return stored;
@@ -586,9 +638,14 @@ async function decryptLatest() {
     );
     const decoded = JSON.parse(new TextDecoder().decode(plaintext));
     plaintextOutput.value = JSON.stringify(decoded, null, 2);
+    setSummary(
+      plaintextSummary,
+      `<strong>${decoded.subject}</strong><br>From device <strong>${decoded.senderDeviceId}</strong><br>${decoded.body}`
+    );
     setStatus(`Latest message from ${latest.from} decrypted locally on device ${state.currentUser.session.deviceId}.`);
   } catch (error) {
     plaintextOutput.value = "";
+    setSummary(plaintextSummary, "Unable to decrypt the latest message with the current local device key.", true);
     setStatus("Unable to decrypt the latest envelope with the locally stored device key.", "error");
     throw error;
   }
@@ -684,4 +741,7 @@ apiBaseInput.value = localStorage.getItem(STORAGE_KEYS.apiBase) || getDefaultApi
 renderLookupResult(null);
 renderSession();
 renderInbox([]);
+setSummary(healthSummary, "No health check has been run yet.", true);
+setSummary(envelopeSummary, "No envelope has been sent yet.", true);
+setSummary(plaintextSummary, "No message decrypted yet.", true);
 healthOutput.value = "Use Check health to verify the backend endpoint.";

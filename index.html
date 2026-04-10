@@ -36,8 +36,12 @@
           <button id="health-button" class="secondary">Check health</button>
         </div>
 
-        <label for="health-output">API health</label>
-        <textarea id="health-output" rows="5" readonly placeholder="Health output will appear here."></textarea>
+        <div id="health-summary" class="summary-card empty">No health check has been run yet.</div>
+
+        <details class="detail-block">
+          <summary>Raw health output</summary>
+          <textarea id="health-output" rows="5" readonly placeholder="Health output will appear here."></textarea>
+        </details>
       </article>
     </section>
 
@@ -65,8 +69,12 @@
           <button id="bootstrap-button" class="secondary">Load demo users</button>
         </div>
 
-        <label for="session-output">Session snapshot</label>
-        <textarea id="session-output" rows="11" readonly placeholder="Authenticated account and local device state will appear here."></textarea>
+        <div id="session-summary" class="summary-card empty">No active account session.</div>
+
+        <details class="detail-block">
+          <summary>Session snapshot</summary>
+          <textarea id="session-output" rows="11" readonly placeholder="Authenticated account and local device state will appear here."></textarea>
+        </details>
       </article>
 
       <article class="panel">
@@ -80,8 +88,12 @@
           <button id="lookup-button" class="secondary">Fetch bundles</button>
         </div>
 
-        <label for="directory-output">Bundle response</label>
-        <textarea id="directory-output" rows="12" readonly placeholder="Recipient public bundles will appear here."></textarea>
+        <div id="bundle-summary" class="summary-card empty">No recipient bundle loaded.</div>
+
+        <details class="detail-block">
+          <summary>Raw bundle response</summary>
+          <textarea id="directory-output" rows="12" readonly placeholder="Recipient public bundles will appear here."></textarea>
+        </details>
       </article>
     </section>
 
@@ -111,8 +123,12 @@
           <button id="copy-envelope-button" class="secondary" disabled>Copy last envelope</button>
         </div>
 
-        <label for="envelope-output">Last stored envelope</label>
-        <textarea id="envelope-output" rows="12" readonly placeholder="The last encrypted envelope sent to the backend will appear here."></textarea>
+        <div id="envelope-summary" class="summary-card empty">No envelope has been sent yet.</div>
+
+        <details class="detail-block">
+          <summary>Raw stored envelope</summary>
+          <textarea id="envelope-output" rows="12" readonly placeholder="The last encrypted envelope sent to the backend will appear here."></textarea>
+        </details>
       </article>
 
       <article class="panel">
@@ -126,11 +142,19 @@
           <button id="decrypt-selected-button" class="secondary">Decrypt latest</button>
         </div>
 
-        <label for="inbox-output">Encrypted inbox feed</label>
-        <textarea id="inbox-output" rows="9" readonly placeholder="Fetched message envelopes will appear here."></textarea>
+        <div id="inbox-summary" class="summary-card empty">No inbox data loaded.</div>
 
-        <label for="plaintext-output">Recovered plaintext</label>
-        <textarea id="plaintext-output" rows="8" readonly placeholder="Locally decrypted message content will appear here."></textarea>
+        <div id="plaintext-summary" class="summary-card empty">No message decrypted yet.</div>
+
+        <details class="detail-block">
+          <summary>Raw inbox feed</summary>
+          <textarea id="inbox-output" rows="9" readonly placeholder="Fetched message envelopes will appear here."></textarea>
+        </details>
+
+        <details class="detail-block">
+          <summary>Recovered plaintext</summary>
+          <textarea id="plaintext-output" rows="8" readonly placeholder="Locally decrypted message content will appear here."></textarea>
+        </details>
       </article>
     </section>
 
