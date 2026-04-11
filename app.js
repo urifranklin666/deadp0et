@@ -755,6 +755,7 @@ async function encryptForRecipient(sender, recipientBundle, subject, body) {
     envelopeId: crypto.randomUUID(),
     recipientDeviceId: recipientDevice.deviceId,
     oneTimePrekeyId,
+    prekeyReservationToken: recipientBundle.prekeyReservationToken,
     ephemeralKey: ephemeralPublic,
     iv: bytesToBase64(iv),
     ciphertext: bytesToBase64(new Uint8Array(ciphertext))
@@ -802,7 +803,8 @@ async function sendMessage() {
           ephemeralKey: envelope.ephemeralKey,
           iv: envelope.iv,
           ciphertext: envelope.ciphertext,
-          oneTimePrekeyId: envelope.oneTimePrekeyId
+          oneTimePrekeyId: envelope.oneTimePrekeyId,
+          prekeyReservationToken: envelope.prekeyReservationToken
         }
       })
     });

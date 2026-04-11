@@ -130,6 +130,15 @@ test("deadp0et backend API flow", async (t) => {
   assert.equal(bundles.body.devices.length, 1);
   assert.equal(bundles.body.devices[0].deviceId, "device-noor-1");
 
+  const prekeyBundle = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  assert.equal(prekeyBundle.status, 200);
+  assert.equal(typeof prekeyBundle.body.prekeyReservationToken, "string");
+  assert.match(prekeyBundle.body.prekeyReservationToken, /^[a-f0-9]{64}$/);
+
   const deliver = await requestJson(baseUrl, "/v1/messages", {
     method: "POST",
     headers: {
@@ -143,7 +152,8 @@ test("deadp0et backend API flow", async (t) => {
         protocol: "deadp0et-envelope-v1",
         ephemeralKey: { kty: "EC", crv: "P-256" },
         iv: "demo-iv",
-        ciphertext: "demo-ciphertext"
+        ciphertext: "demo-ciphertext",
+        prekeyReservationToken: prekeyBundle.body.prekeyReservationToken
       }
     })
   });
@@ -379,6 +389,8 @@ test("deadp0et issues and consumes one-time prekeys for recipient bundles", asyn
   assert.equal(firstBundle.body.device.deviceId, "device-noor-1");
   assert.equal(firstBundle.body.oneTimePrekey.keyId, "otk-1");
   assert.match(firstBundle.body.oneTimePrekeyConsumedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(firstBundle.body.prekeyReservationToken, /^[a-f0-9]{64}$/);
+  assert.match(firstBundle.body.prekeyReservationExpiresAt, /^\d{4}-\d{2}-\d{2}T/);
 
   const secondBundle = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
     method: "POST",
@@ -387,6 +399,7 @@ test("deadp0et issues and consumes one-time prekeys for recipient bundles", asyn
   });
   assert.equal(secondBundle.status, 200);
   assert.equal(secondBundle.body.oneTimePrekey.keyId, "otk-2");
+  assert.match(secondBundle.body.prekeyReservationToken, /^[a-f0-9]{64}$/);
 
   const thirdBundle = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
     method: "POST",
@@ -396,6 +409,7 @@ test("deadp0et issues and consumes one-time prekeys for recipient bundles", asyn
   assert.equal(thirdBundle.status, 200);
   assert.equal(thirdBundle.body.oneTimePrekey, null);
   assert.equal(thirdBundle.body.oneTimePrekeyConsumedAt, null);
+  assert.match(thirdBundle.body.prekeyReservationToken, /^[a-f0-9]{64}$/);
 
   const storeFile = path.join(dataDir, "store.json");
   const persisted = JSON.parse(fs.readFileSync(storeFile, "utf8"));
@@ -448,6 +462,136 @@ test("deadp0et does not duplicate one-time prekeys under concurrent reservations
   assert.deepEqual(new Set(keyIds), new Set(["otk-a", "otk-b", "otk-c"]));
   const nullCount = successful.filter((response) => response.body.oneTimePrekey === null).length;
   assert.equal(nullCount, 2);
+});
+
+test("deadp0et enforces prekey reservation tokens for message delivery", async (t) => {
+  const { baseUrl } = await startServer(t);
+
+  const sender = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-iris-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-iris"
+      }
+    })
+  });
+  assert.equal(sender.status, 201);
+
+  const recipient = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "noor",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-noor-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-noor",
+        oneTimePrekeys: [{ keyId: "otk-1", key: { kty: "EC", crv: "P-256", x: "one" } }]
+      }
+    })
+  });
+  assert.equal(recipient.status, 201);
+
+  const missingReservation = await requestJson(baseUrl, "/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${sender.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      to: "noor",
+      recipientDeviceId: "device-noor-1",
+      envelope: {
+        protocol: "deadp0et-envelope-v1",
+        ephemeralKey: { kty: "EC", crv: "P-256" },
+        iv: "demo-iv",
+        ciphertext: "demo-ciphertext"
+      }
+    })
+  });
+  assert.equal(missingReservation.status, 400);
+  assert.match(missingReservation.body.error.message, /prekeyReservationToken is required/i);
+
+  const reserved = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  assert.equal(reserved.status, 200);
+  assert.equal(reserved.body.oneTimePrekey.keyId, "otk-1");
+
+  const invalidPrekeyId = await requestJson(baseUrl, "/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${sender.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      to: "noor",
+      recipientDeviceId: "device-noor-1",
+      envelope: {
+        protocol: "deadp0et-envelope-v1",
+        ephemeralKey: { kty: "EC", crv: "P-256" },
+        iv: "demo-iv",
+        ciphertext: "demo-ciphertext",
+        oneTimePrekeyId: "wrong-key-id",
+        prekeyReservationToken: reserved.body.prekeyReservationToken
+      }
+    })
+  });
+  assert.equal(invalidPrekeyId.status, 409);
+  assert.match(invalidPrekeyId.body.error.message, /does not match reserved prekey/i);
+
+  const firstSend = await requestJson(baseUrl, "/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${sender.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      to: "noor",
+      recipientDeviceId: "device-noor-1",
+      envelope: {
+        protocol: "deadp0et-envelope-v1",
+        ephemeralKey: { kty: "EC", crv: "P-256" },
+        iv: "demo-iv",
+        ciphertext: "demo-ciphertext",
+        oneTimePrekeyId: "otk-1",
+        prekeyReservationToken: reserved.body.prekeyReservationToken
+      }
+    })
+  });
+  assert.equal(firstSend.status, 201);
+
+  const replaySend = await requestJson(baseUrl, "/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${sender.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      to: "noor",
+      recipientDeviceId: "device-noor-1",
+      envelope: {
+        protocol: "deadp0et-envelope-v1",
+        ephemeralKey: { kty: "EC", crv: "P-256" },
+        iv: "demo-iv-2",
+        ciphertext: "demo-ciphertext-2",
+        oneTimePrekeyId: "otk-1",
+        prekeyReservationToken: reserved.body.prekeyReservationToken
+      }
+    })
+  });
+  assert.equal(replaySend.status, 409);
+  assert.match(replaySend.body.error.message, /invalid, expired, or already consumed/i);
 });
 
 test("deadp0et migrates legacy passwordVerifier records on successful login", async (t) => {

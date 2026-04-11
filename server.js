@@ -12,6 +12,7 @@ const MAX_PASSWORD_VERIFIER_LENGTH = Number(process.env.MAX_PASSWORD_VERIFIER_LE
 const AUTH_WINDOW_MS = Math.max(1000, Number(process.env.AUTH_WINDOW_MS || 10 * 60 * 1000));
 const AUTH_MAX_ATTEMPTS_PER_KEY = Math.max(1, Number(process.env.AUTH_MAX_ATTEMPTS_PER_KEY || 8));
 const AUTH_BLOCK_MS = Math.max(1000, Number(process.env.AUTH_BLOCK_MS || 15 * 60 * 1000));
+const PREKEY_RESERVATION_TTL_MS = Math.max(1000, Number(process.env.PREKEY_RESERVATION_TTL_MS || 10 * 60 * 1000));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 const STATIC_FILES = {
@@ -96,7 +97,8 @@ function defaultStore() {
   return {
     accounts: [],
     sessions: [],
-    messages: []
+    messages: [],
+    prekeyReservations: []
   };
 }
 
@@ -107,7 +109,8 @@ function loadStore() {
     return {
       accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [],
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
-      messages: Array.isArray(parsed.messages) ? parsed.messages : []
+      messages: Array.isArray(parsed.messages) ? parsed.messages : [],
+      prekeyReservations: Array.isArray(parsed.prekeyReservations) ? parsed.prekeyReservations : []
     };
   } catch (error) {
     if (error.code === "ENOENT") {
@@ -233,6 +236,63 @@ function reserveOneTimePrekey(device) {
     prekey: reservedPrekey,
     consumedAt
   };
+}
+
+function prunePrekeyReservations() {
+  const now = Date.now();
+  const before = store.prekeyReservations.length;
+  store.prekeyReservations = store.prekeyReservations.filter((entry) => {
+    if (entry.consumedAt) {
+      return true;
+    }
+    const expiresAtMs = Date.parse(entry.expiresAt || 0);
+    if (Number.isNaN(expiresAtMs)) {
+      return false;
+    }
+    return expiresAtMs > now;
+  });
+  return store.prekeyReservations.length !== before;
+}
+
+function createPrekeyReservation(account, device, reservedOneTimePrekey) {
+  const reservation = {
+    reservationId: randomId(),
+    reservationToken: randomToken(),
+    username: account.username,
+    recipientDeviceId: device.deviceId,
+    oneTimePrekeyId: reservedOneTimePrekey?.prekey?.keyId || null,
+    oneTimePrekeyConsumedAt: reservedOneTimePrekey?.consumedAt || null,
+    createdAt: nowIso(),
+    expiresAt: new Date(Date.now() + PREKEY_RESERVATION_TTL_MS).toISOString(),
+    consumedAt: null,
+    consumedByMessageId: null
+  };
+  store.prekeyReservations.push(reservation);
+  return reservation;
+}
+
+function findUsablePrekeyReservation(token, recipientUsername, recipientDeviceId) {
+  if (typeof token !== "string" || !token.trim()) {
+    return null;
+  }
+
+  const reservation = store.prekeyReservations.find(
+    (entry) =>
+      entry.reservationToken === token &&
+      entry.username === recipientUsername &&
+      entry.recipientDeviceId === recipientDeviceId &&
+      !entry.consumedAt
+  );
+
+  if (!reservation) {
+    return null;
+  }
+
+  if (Date.parse(reservation.expiresAt || 0) <= Date.now()) {
+    return null;
+  }
+
+  return reservation;
 }
 
 function validateJwkLike(value, fieldName) {
@@ -614,7 +674,9 @@ async function handleIssuePrekeyBundle(request, response, username) {
   }
 
   const reservedOneTimePrekey = reserveOneTimePrekey(selectedDevice);
-  if (reservedOneTimePrekey) {
+  const reservation = createPrekeyReservation(account, selectedDevice, reservedOneTimePrekey);
+  const reservationsPruned = prunePrekeyReservations();
+  if (reservedOneTimePrekey || reservationsPruned || reservation) {
     saveStore(store);
   }
 
@@ -628,7 +690,9 @@ async function handleIssuePrekeyBundle(request, response, username) {
       prekeySignature: selectedDevice.prekeySignature
     },
     oneTimePrekey: reservedOneTimePrekey ? reservedOneTimePrekey.prekey : null,
-    oneTimePrekeyConsumedAt: reservedOneTimePrekey ? reservedOneTimePrekey.consumedAt : null
+    oneTimePrekeyConsumedAt: reservedOneTimePrekey ? reservedOneTimePrekey.consumedAt : null,
+    prekeyReservationToken: reservation.reservationToken,
+    prekeyReservationExpiresAt: reservation.expiresAt
   });
 }
 
@@ -679,6 +743,31 @@ async function handleStoreMessage(request, response) {
     sendError(response, 400, "envelope.oneTimePrekeyId must be a non-empty string when provided.");
     return;
   }
+  const prekeyReservationToken = envelope.prekeyReservationToken;
+  if (typeof prekeyReservationToken !== "string" || !prekeyReservationToken.trim()) {
+    sendError(response, 400, "envelope.prekeyReservationToken is required.");
+    return;
+  }
+
+  const reservationsPruned = prunePrekeyReservations();
+  const reservation = findUsablePrekeyReservation(prekeyReservationToken.trim(), recipient.username, recipientDeviceId);
+  if (!reservation) {
+    if (reservationsPruned) {
+      saveStore(store);
+    }
+    sendError(response, 409, "Prekey reservation is invalid, expired, or already consumed.");
+    return;
+  }
+
+  const normalizedOneTimePrekeyId = oneTimePrekeyId ? oneTimePrekeyId.trim() : null;
+  if (reservation.oneTimePrekeyId && reservation.oneTimePrekeyId !== normalizedOneTimePrekeyId) {
+    sendError(response, 409, "Envelope oneTimePrekeyId does not match reserved prekey.");
+    return;
+  }
+  if (!reservation.oneTimePrekeyId && normalizedOneTimePrekeyId) {
+    sendError(response, 409, "Envelope includes a oneTimePrekeyId but reservation does not.");
+    return;
+  }
 
   const message = {
     messageId: randomId(),
@@ -691,7 +780,8 @@ async function handleStoreMessage(request, response) {
       ephemeralKey: envelope.ephemeralKey,
       iv: envelope.iv,
       ciphertext: envelope.ciphertext,
-      oneTimePrekeyId: oneTimePrekeyId ? oneTimePrekeyId.trim() : null
+      oneTimePrekeyId: normalizedOneTimePrekeyId,
+      prekeyReservationToken: prekeyReservationToken.trim()
     },
     storedAt: nowIso(),
     deliveredAt: null,
@@ -700,6 +790,8 @@ async function handleStoreMessage(request, response) {
   };
 
   store.messages.push(message);
+  reservation.consumedAt = nowIso();
+  reservation.consumedByMessageId = message.messageId;
   saveStore(store);
 
   sendJson(response, 201, {
@@ -944,7 +1036,8 @@ function handleHealth(response) {
     status: "ok",
     accounts: store.accounts.length,
     sessions: store.sessions.filter((session) => !session.revokedAt && (!session.expiresAt || Date.parse(session.expiresAt) > Date.now())).length,
-    messages: store.messages.length
+    messages: store.messages.length,
+    prekeyReservations: store.prekeyReservations.filter((entry) => !entry.consumedAt && Date.parse(entry.expiresAt || 0) > Date.now()).length
   });
 }
 

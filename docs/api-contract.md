@@ -83,7 +83,9 @@ Response:
     "prekeySignature": "base64"
   },
   "oneTimePrekey": {"keyId": "otk-1", "key": {"kty": "..."}},
-  "oneTimePrekeyConsumedAt": "2026-04-17T00:00:00.000Z"
+  "oneTimePrekeyConsumedAt": "2026-04-17T00:00:00.000Z",
+  "prekeyReservationToken": "opaque-reservation-token",
+  "prekeyReservationExpiresAt": "2026-04-17T00:10:00.000Z"
 }
 ```
 
@@ -102,7 +104,8 @@ Request:
     "ephemeralKey": {"kty": "..."},
     "iv": "base64",
     "ciphertext": "base64",
-    "oneTimePrekeyId": "optional-otk-id"
+    "oneTimePrekeyId": "optional-otk-id",
+    "prekeyReservationToken": "required-token-from-prekey-bundle"
   }
 }
 ```
