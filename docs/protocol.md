@@ -114,3 +114,9 @@ This prototype is intentionally simplified. To become serious production securit
 - Track message ids, timestamps, and unread state
 - Enforce rate limits, abuse detection, and retention rules
 - Never decrypt message contents
+
+## Current implementation note
+
+The current backend implementation follows those responsibilities in a modular Node.js service split across auth,
+devices, messages, prekeys, HTTP helpers, and file-backed repositories. The storage layer is still JSON-file based,
+which is acceptable for the prototype but should be replaced before serious deployment.

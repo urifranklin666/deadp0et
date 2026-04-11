@@ -37,6 +37,12 @@ Response:
 
 Authenticates an existing account and returns a session.
 
+Behavior notes:
+
+- Sessions are device-scoped.
+- Expired or revoked-device sessions are rejected with `401`.
+- Repeated failed login attempts are throttled and may return `429` with `Retry-After`.
+
 ## `GET /v1/users/:username/bundles`
 
 Returns the active public key bundles for a recipient account.
@@ -128,6 +134,9 @@ Returns message envelopes addressed to the authenticated device or account.
 Response fields may include delivery metadata such as `deliveredAt`, `readAt`, and `deliveryCount`. Messages whose
 reservation TTL has expired before acknowledgement are omitted from inbox results.
 
+The current backend defaults the inbox view to the authenticated session device unless a `deviceId` query parameter is
+provided.
+
 ## `POST /v1/messages/inbox/ack`
 
 Marks one or more inbox messages as read for the authenticated device.
@@ -164,3 +173,20 @@ Revokes a device and prevents future deliveries to it.
 ## `POST /v1/prekeys/rotate`
 
 Uploads fresh signed and one-time prekeys for a device.
+
+## `GET /health`
+
+Returns backend health and operational counters.
+
+Response fields currently include:
+
+- `status`
+- `accounts`
+- `sessions`
+- `messages`
+- `prekeyReservations`
+- `deliveredPendingAckReservations`
+- `releasedPrekeyReservations`
+- `reservedOneTimePrekeys`
+- `consumedOneTimePrekeys`
+- `expiredMessages`
