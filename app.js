@@ -1,6 +1,7 @@
 const STORAGE_KEYS = {
   apiBase: "deadp0et.apiBase",
-  localDevices: "deadp0et.localDevices"
+  localDevices: "deadp0et.localDevices",
+  contactTrust: "deadp0et.contactTrust"
 };
 const ONE_TIME_PREKEY_BATCH_SIZE = 8;
 
@@ -108,6 +109,24 @@ function saveLocalDevices(devices) {
   localStorage.setItem(STORAGE_KEYS.localDevices, JSON.stringify(devices));
 }
 
+function loadContactTrust() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.contactTrust);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function saveContactTrust(records) {
+  localStorage.setItem(STORAGE_KEYS.contactTrust, JSON.stringify(records));
+}
+
+function makeContactTrustKey(username, deviceId) {
+  return `${normalizeUsername(username)}#${String(deviceId || "").trim()}`;
+}
+
 function makeDeviceStorageKey(username, deviceId) {
   return `${normalizeUsername(username)}#${deviceId}`;
 }
@@ -168,6 +187,133 @@ async function sha256(text) {
   const bytes = new TextEncoder().encode(text);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return bytesToBase64(new Uint8Array(digest));
+}
+
+function sortObjectDeep(value) {
+  if (Array.isArray(value)) {
+    return value.map(sortObjectDeep);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  const sorted = {};
+  for (const key of Object.keys(value).sort()) {
+    sorted[key] = sortObjectDeep(value[key]);
+  }
+  return sorted;
+}
+
+async function sha256Hex(text) {
+  const bytes = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function computeDeviceFingerprint(username, device) {
+  const payload = {
+    username: normalizeUsername(username),
+    deviceId: device.deviceId,
+    identityKey: sortObjectDeep(device.identityKey || {}),
+    signedPrekey: sortObjectDeep(device.signedPrekey || {}),
+    prekeySignature: device.prekeySignature || ""
+  };
+  const fingerprint = await sha256Hex(JSON.stringify(payload));
+  const safetyNumber = (fingerprint.slice(0, 60).match(/.{1,5}/g) || []).join(" ");
+  return { fingerprint, safetyNumber };
+}
+
+function getContactTrustRecord(username, deviceId) {
+  const records = loadContactTrust();
+  return records[makeContactTrustKey(username, deviceId)] || null;
+}
+
+function setContactTrustRecord(username, deviceId, record) {
+  const records = loadContactTrust();
+  records[makeContactTrustKey(username, deviceId)] = record;
+  saveContactTrust(records);
+}
+
+async function assessDeviceTrust(username, device) {
+  const normalizedUsername = normalizeUsername(username);
+  const deviceId = String(device.deviceId || "").trim();
+  const record = getContactTrustRecord(normalizedUsername, deviceId);
+  const { fingerprint, safetyNumber } = await computeDeviceFingerprint(normalizedUsername, device);
+  const now = new Date().toISOString();
+
+  if (!record) {
+    const nextRecord = {
+      username: normalizedUsername,
+      deviceId,
+      trustedFingerprint: fingerprint,
+      trustedSafetyNumber: safetyNumber,
+      firstSeenAt: now,
+      lastSeenAt: now,
+      status: "trusted"
+    };
+    setContactTrustRecord(normalizedUsername, deviceId, nextRecord);
+    return {
+      status: "trusted-first-seen",
+      trusted: true,
+      safetyNumber,
+      note: "First seen (TOFU).",
+      changed: false
+    };
+  }
+
+  if (record.trustedFingerprint === fingerprint) {
+    const nextRecord = {
+      ...record,
+      lastSeenAt: now,
+      trustedSafetyNumber: safetyNumber
+    };
+    setContactTrustRecord(normalizedUsername, deviceId, nextRecord);
+    return {
+      status: "trusted",
+      trusted: true,
+      safetyNumber,
+      note: "Verified key matches trusted fingerprint.",
+      changed: false
+    };
+  }
+
+  const changedRecord = {
+    ...record,
+    status: "changed",
+    lastSeenAt: now,
+    pendingFingerprint: fingerprint,
+    pendingSafetyNumber: safetyNumber,
+    changedAt: now
+  };
+  setContactTrustRecord(normalizedUsername, deviceId, changedRecord);
+  return {
+    status: "changed",
+    trusted: false,
+    safetyNumber,
+    note: "Key changed since last trusted fingerprint.",
+    changed: true
+  };
+}
+
+async function trustCurrentDeviceFingerprint(username, device) {
+  const normalizedUsername = normalizeUsername(username);
+  const deviceId = String(device.deviceId || "").trim();
+  const { fingerprint, safetyNumber } = await computeDeviceFingerprint(normalizedUsername, device);
+  const previous = getContactTrustRecord(normalizedUsername, deviceId);
+  const now = new Date().toISOString();
+  const nextRecord = {
+    username: normalizedUsername,
+    deviceId,
+    trustedFingerprint: fingerprint,
+    trustedSafetyNumber: safetyNumber,
+    firstSeenAt: previous?.firstSeenAt || now,
+    lastSeenAt: now,
+    trustedAt: now,
+    status: "trusted"
+  };
+  setContactTrustRecord(normalizedUsername, deviceId, nextRecord);
+  return nextRecord;
 }
 
 async function deriveAesKey(sharedSecret) {
@@ -378,7 +524,7 @@ async function apiRequest(path, options = {}) {
   return payload;
 }
 
-function renderLookupResult(payload = null) {
+async function renderLookupResult(payload = null) {
   state.lookupCache = payload;
   directoryOutput.value = payload
     ? JSON.stringify(payload, null, 2)
@@ -390,9 +536,19 @@ function renderLookupResult(payload = null) {
   }
 
   const devices = payload.devices || [];
-  const deviceSummary = devices.length
-    ? devices.map((device) => `<strong>${device.deviceId}</strong>`).join(", ")
-    : "none";
+  const trustRows = [];
+  for (const device of devices) {
+    const trust = await assessDeviceTrust(payload.username, device);
+    const action = trust.changed
+      ? `<button type="button" data-action="trust-device" data-username="${payload.username}" data-device-id="${device.deviceId}">Trust Current Device Keys</button>`
+      : "";
+    trustRows.push(
+      `<div><strong>${device.deviceId}</strong><br>` +
+        `Safety #: <code>${trust.safetyNumber}</code><br>` +
+        `${trust.note}${action ? `<br>${action}` : ""}</div>`
+    );
+  }
+  const deviceSummary = trustRows.length ? trustRows.join("<br><br>") : "none";
 
   setSummary(
     bundleSummary,
@@ -593,11 +749,11 @@ async function fetchBundles(username = lookupUsername.value) {
       method: "GET",
       headers: {}
     });
-    renderLookupResult(payload);
+    await renderLookupResult(payload);
     setStatus(`Fetched ${payload.devices.length} active bundle(s) for ${payload.username}.`);
     return payload;
   } catch (error) {
-    renderLookupResult(null);
+    await renderLookupResult(null);
     setStatus(error.message, "error");
     throw error;
   } finally {
@@ -617,7 +773,7 @@ async function fetchPrekeyBundle(username, deviceId = "") {
     body: JSON.stringify(body)
   });
 
-  renderLookupResult({
+  await renderLookupResult({
     username: payload.username,
     devices: [{
       ...payload.device,
@@ -865,6 +1021,12 @@ async function sendMessage() {
     const prekeyBundle = await fetchPrekeyBundle(to);
     if (!prekeyBundle || !prekeyBundle.device) {
       throw new Error("Recipient has no active prekey bundle.");
+    }
+    const trust = await assessDeviceTrust(prekeyBundle.username, prekeyBundle.device);
+    if (!trust.trusted) {
+      throw new Error(
+        `Recipient device keys changed for ${prekeyBundle.device.deviceId}. Review safety number in Bundle Lookup and click "Trust Current Device Keys" before sending.`
+      );
     }
 
     const envelope = await encryptForRecipient(state.currentUser, prekeyBundle, subject, body);
@@ -1256,6 +1418,30 @@ decryptSelectedButton.addEventListener("click", () => {
 
 signupUsername.addEventListener("input", () => {
   renderLocalDeviceOptions(signupUsername.value);
+});
+
+bundleSummary.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  if (target.getAttribute("data-action") !== "trust-device") {
+    return;
+  }
+
+  const username = target.getAttribute("data-username") || "";
+  const deviceId = target.getAttribute("data-device-id") || "";
+  const payload = state.lookupCache;
+  const device = payload?.devices?.find((entry) => entry.deviceId === deviceId);
+  if (!username || !device) {
+    setStatus("Unable to locate the selected device in lookup cache.", "error");
+    return;
+  }
+
+  trustCurrentDeviceFingerprint(username, device)
+    .then(() => renderLookupResult(payload))
+    .then(() => setStatus(`Trusted current keys for ${normalizeUsername(username)} device ${deviceId}.`))
+    .catch((error) => setStatus(error.message, "error"));
 });
 
 apiBaseInput.value = localStorage.getItem(STORAGE_KEYS.apiBase) || getDefaultApiBase();
