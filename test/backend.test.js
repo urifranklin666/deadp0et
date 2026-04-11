@@ -127,8 +127,12 @@ test("deadp0et backend API flow", async (t) => {
 
   const bundles = await requestJson(baseUrl, "/v1/users/noor/bundles");
   assert.equal(bundles.status, 200);
+  assert.equal(typeof bundles.body.lowOneTimePrekeyThreshold, "number");
+  assert.ok(Array.isArray(bundles.body.prekeyWarnings));
   assert.equal(bundles.body.devices.length, 1);
   assert.equal(bundles.body.devices[0].deviceId, "device-noor-1");
+  assert.equal(typeof bundles.body.devices[0].availableOneTimePrekeys, "number");
+  assert.equal(typeof bundles.body.devices[0].lowOneTimePrekeys, "boolean");
 
   const prekeyBundle = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
     method: "POST",
@@ -306,7 +310,10 @@ test("deadp0et supports multi-device registration, prekey rotation, and targeted
   });
 
   assert.equal(listedDevices.status, 200);
+  assert.equal(typeof listedDevices.body.lowOneTimePrekeyThreshold, "number");
+  assert.ok(Array.isArray(listedDevices.body.prekeyWarnings));
   assert.equal(listedDevices.body.devices.length, 2);
+  assert.equal(typeof listedDevices.body.devices[0].availableOneTimePrekeys, "number");
 
   const bundlesAfterAdd = await requestJson(baseUrl, "/v1/users/iris/bundles");
   assert.equal(bundlesAfterAdd.status, 200);
@@ -419,6 +426,50 @@ test("deadp0et issues and consumes one-time prekeys for recipient bundles", asyn
   assert.equal(recipient.devices[0].consumedOneTimePrekeys.length, 2);
   assert.equal(recipient.devices[0].consumedOneTimePrekeys[0].prekey.keyId, "otk-1");
   assert.equal(recipient.devices[0].consumedOneTimePrekeys[1].prekey.keyId, "otk-2");
+});
+
+test("deadp0et reports low one-time prekey warnings for active devices", async (t) => {
+  const { baseUrl } = await startServer(t, {
+    LOW_ONE_TIME_PREKEY_THRESHOLD: "2"
+  });
+
+  const createRecipient = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "noor",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-noor-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-1",
+        oneTimePrekeys: [{ keyId: "otk-1", key: { kty: "EC", crv: "P-256", x: "one" } }]
+      }
+    })
+  });
+  assert.equal(createRecipient.status, 201);
+
+  const bundles = await requestJson(baseUrl, "/v1/users/noor/bundles");
+  assert.equal(bundles.status, 200);
+  assert.equal(bundles.body.lowOneTimePrekeyThreshold, 2);
+  assert.equal(bundles.body.devices[0].availableOneTimePrekeys, 1);
+  assert.equal(bundles.body.devices[0].lowOneTimePrekeys, true);
+  assert.match(bundles.body.devices[0].prekeyWarning, /low one-time prekeys/i);
+  assert.equal(bundles.body.prekeyWarnings.length, 1);
+  assert.equal(bundles.body.prekeyWarnings[0].deviceId, "device-noor-1");
+  assert.match(bundles.body.prekeyWarnings[0].warning, /threshold 2/i);
+
+  const devices = await requestJson(baseUrl, "/v1/devices", {
+    headers: {
+      Authorization: `Bearer ${createRecipient.body.session.accessToken}`
+    }
+  });
+  assert.equal(devices.status, 200);
+  assert.equal(devices.body.lowOneTimePrekeyThreshold, 2);
+  assert.equal(devices.body.devices[0].availableOneTimePrekeys, 1);
+  assert.equal(devices.body.devices[0].lowOneTimePrekeys, true);
+  assert.equal(devices.body.prekeyWarnings.length, 1);
 });
 
 test("deadp0et does not duplicate one-time prekeys under concurrent reservations", async (t) => {

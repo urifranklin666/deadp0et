@@ -316,6 +316,26 @@ function consumeLocalOneTimePrekey(username, deviceId, keyId) {
   return true;
 }
 
+async function appendLocalOneTimePrekeys(username, deviceId, privateOneTimePrekeyKeys, publicOneTimePrekeys = []) {
+  const record = getLocalDevice(username, deviceId);
+  if (!record) {
+    return false;
+  }
+
+  record.privateKeys = record.privateKeys || {};
+  record.privateKeys.oneTimePrekeyPrivateKeys = record.privateKeys.oneTimePrekeyPrivateKeys || {};
+  for (const [keyId, privateKey] of Object.entries(privateOneTimePrekeyKeys || {})) {
+    record.privateKeys.oneTimePrekeyPrivateKeys[keyId] = await exportKeyPair(privateKey);
+  }
+
+  record.publicBundle = record.publicBundle || {};
+  const existingPublicPrekeys = Array.isArray(record.publicBundle.oneTimePrekeys) ? record.publicBundle.oneTimePrekeys : [];
+  record.publicBundle.oneTimePrekeys = [...existingPublicPrekeys, ...publicOneTimePrekeys];
+  record.storedAt = new Date().toISOString();
+  storeLocalDevice(record);
+  return true;
+}
+
 async function deriveSharedSecret(privateKey, remotePublicJwk) {
   const remotePublicKey = await crypto.subtle.importKey(
     "jwk",
@@ -395,12 +415,27 @@ function renderDevices(payload = null) {
 
   const activeDevices = state.devices.filter((device) => !device.revokedAt);
   const revokedDevices = state.devices.filter((device) => device.revokedAt);
+  const lowPrekeyDevices = activeDevices.filter((device) => device.lowOneTimePrekeys);
+  const lowThreshold = Number(payload.lowOneTimePrekeyThreshold || 0);
+  const lowPrekeySummary = lowPrekeyDevices.length
+    ? lowPrekeyDevices
+        .map((device) => `${device.deviceId} (${device.availableOneTimePrekeys})`)
+        .join(", ")
+    : "none";
+  const localDeviceId = state.currentUser?.publicBundle?.deviceId;
+  const localLowPrekeyDevice = lowPrekeyDevices.find((device) => device.deviceId === localDeviceId) || null;
+
   setSummary(
     devicesSummary,
-    `<strong>${activeDevices.length}</strong> active device(s)<br><strong>${revokedDevices.length}</strong> revoked device(s)`
+    `<strong>${activeDevices.length}</strong> active device(s)<br>` +
+      `<strong>${revokedDevices.length}</strong> revoked device(s)<br>` +
+      `<strong>${lowPrekeyDevices.length}</strong> low-prekey device(s)${lowThreshold ? ` (threshold ${lowThreshold})` : ""}<br>` +
+      `${lowPrekeySummary}` +
+      (localLowPrekeyDevice
+        ? `<br><button type="button" id="replenish-local-prekeys-inline">Replenish Local Prekeys</button>`
+        : "")
   );
 
-  const localDeviceId = state.currentUser?.publicBundle?.deviceId;
   const localDevicePresent = Boolean(localDeviceId && activeDevices.some((device) => device.deviceId === localDeviceId));
   setSummary(
     devicePortabilitySummary,
@@ -413,6 +448,47 @@ function renderDevices(payload = null) {
   devicePortabilityOutput.value = localDevicePresent
     ? `This browser can decrypt envelopes addressed to ${localDeviceId}. Additional devices must generate or import their own private keys locally.`
     : "Authentication alone is not enough for decryption. A browser can only decrypt messages for devices whose private keys are stored locally.";
+}
+
+async function replenishLocalPrekeys(deviceId) {
+  if (!state.currentUser) {
+    setStatus("Sign in before replenishing one-time prekeys.", "error");
+    return;
+  }
+
+  const localDeviceId = state.currentUser.publicBundle?.deviceId;
+  if (!localDeviceId || deviceId !== localDeviceId) {
+    setStatus("One-click replenish is only available for the local device in this browser.", "error");
+    return;
+  }
+
+  const targetDevice = state.devices.find((device) => device.deviceId === deviceId && !device.revokedAt);
+  if (!targetDevice) {
+    setStatus("Target device is not active on this account.", "error");
+    return;
+  }
+
+  setStatus(`Replenishing one-time prekeys for local device ${deviceId}...`);
+  const oneTimePrekeySet = await generateOneTimePrekeySet();
+  const existingOneTimePrekeys = Array.isArray(targetDevice.oneTimePrekeys) ? targetDevice.oneTimePrekeys : [];
+
+  await apiRequest("/v1/prekeys/rotate", {
+    method: "POST",
+    body: JSON.stringify({
+      deviceId,
+      signedPrekey: targetDevice.signedPrekey,
+      prekeySignature: targetDevice.prekeySignature,
+      oneTimePrekeys: [...existingOneTimePrekeys, ...oneTimePrekeySet.publicOneTimePrekeys]
+    })
+  });
+
+  state.currentUser.privateKeys.oneTimePrekeyPrivateKeys = {
+    ...(state.currentUser.privateKeys.oneTimePrekeyPrivateKeys || {}),
+    ...oneTimePrekeySet.privateOneTimePrekeyKeys
+  };
+  await appendLocalOneTimePrekeys(state.currentUser.username, deviceId, oneTimePrekeySet.privateOneTimePrekeyKeys, oneTimePrekeySet.publicOneTimePrekeys);
+  await fetchDevices();
+  setStatus(`Replenished local one-time prekeys for ${deviceId}.`);
 }
 
 function renderSession() {
@@ -1121,6 +1197,23 @@ addDeviceButton.addEventListener("click", () => {
 
 applyDeviceActionButton.addEventListener("click", () => {
   applyDeviceAction().catch((error) => setStatus(error.message, "error"));
+});
+
+devicesSummary.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  if (target.id !== "replenish-local-prekeys-inline") {
+    return;
+  }
+
+  const localDeviceId = state.currentUser?.publicBundle?.deviceId;
+  if (!localDeviceId) {
+    setStatus("Local device is not available.", "error");
+    return;
+  }
+  replenishLocalPrekeys(localDeviceId).catch((error) => setStatus(error.message, "error"));
 });
 
 exportDeviceButton.addEventListener("click", () => {

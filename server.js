@@ -13,6 +13,7 @@ const AUTH_WINDOW_MS = Math.max(1000, Number(process.env.AUTH_WINDOW_MS || 10 * 
 const AUTH_MAX_ATTEMPTS_PER_KEY = Math.max(1, Number(process.env.AUTH_MAX_ATTEMPTS_PER_KEY || 8));
 const AUTH_BLOCK_MS = Math.max(1000, Number(process.env.AUTH_BLOCK_MS || 15 * 60 * 1000));
 const PREKEY_RESERVATION_TTL_MS = Math.max(1000, Number(process.env.PREKEY_RESERVATION_TTL_MS || 10 * 60 * 1000));
+const LOW_ONE_TIME_PREKEY_THRESHOLD = Math.max(1, Number(process.env.LOW_ONE_TIME_PREKEY_THRESHOLD || 5));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 const STATIC_FILES = {
@@ -196,13 +197,33 @@ function findAccountById(accountId) {
   return store.accounts.find((account) => account.accountId === accountId) || null;
 }
 
+function getAvailableOneTimePrekeysCount(device) {
+  return Array.isArray(device.oneTimePrekeys) ? device.oneTimePrekeys.length : 0;
+}
+
+function getOneTimePrekeyWarning(device) {
+  const availableOneTimePrekeys = getAvailableOneTimePrekeysCount(device);
+  if (device.revokedAt) {
+    return null;
+  }
+  if (availableOneTimePrekeys >= LOW_ONE_TIME_PREKEY_THRESHOLD) {
+    return null;
+  }
+  return `Low one-time prekeys for device ${device.deviceId}: ${availableOneTimePrekeys} remaining (threshold ${LOW_ONE_TIME_PREKEY_THRESHOLD}).`;
+}
+
 function getPublicDeviceBundle(device) {
+  const availableOneTimePrekeys = getAvailableOneTimePrekeysCount(device);
+  const prekeyWarning = getOneTimePrekeyWarning(device);
   return {
     deviceId: device.deviceId,
     identityKey: device.identityKey,
     signedPrekey: device.signedPrekey,
     prekeySignature: device.prekeySignature,
     oneTimePrekeys: Array.isArray(device.oneTimePrekeys) ? device.oneTimePrekeys : [],
+    availableOneTimePrekeys,
+    lowOneTimePrekeys: Boolean(prekeyWarning),
+    prekeyWarning,
     registeredAt: device.registeredAt,
     revokedAt: device.revokedAt || null
   };
@@ -448,6 +469,15 @@ function parseUrl(request) {
   return new URL(request.url, `http://${request.headers.host || "localhost"}`);
 }
 
+function buildPrekeyWarnings(devices) {
+  return devices
+    .map((device) => ({
+      deviceId: device.deviceId,
+      warning: getOneTimePrekeyWarning(device)
+    }))
+    .filter((entry) => Boolean(entry.warning));
+}
+
 function getClientIp(request) {
   const forwardedFor = request.headers["x-forwarded-for"];
   if (typeof forwardedFor === "string" && forwardedFor.trim()) {
@@ -634,9 +664,12 @@ function handleGetBundles(response, username) {
     return;
   }
 
+  const activeDevices = getActiveDevices(account);
   sendJson(response, 200, {
     username: account.username,
-    devices: getActiveDevices(account).map(getPublicDeviceBundle)
+    lowOneTimePrekeyThreshold: LOW_ONE_TIME_PREKEY_THRESHOLD,
+    devices: activeDevices.map(getPublicDeviceBundle),
+    prekeyWarnings: buildPrekeyWarnings(activeDevices)
   });
 }
 
@@ -947,7 +980,9 @@ function handleListDevices(request, response) {
 
   sendJson(response, 200, {
     username: auth.account.username,
-    devices: auth.account.devices.map(getPublicDeviceBundle)
+    lowOneTimePrekeyThreshold: LOW_ONE_TIME_PREKEY_THRESHOLD,
+    devices: auth.account.devices.map(getPublicDeviceBundle),
+    prekeyWarnings: buildPrekeyWarnings(getActiveDevices(auth.account))
   });
 }
 

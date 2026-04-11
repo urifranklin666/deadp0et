@@ -46,12 +46,22 @@ Response:
 ```json
 {
   "username": "noor",
+  "lowOneTimePrekeyThreshold": 5,
+  "prekeyWarnings": [
+    {
+      "deviceId": "uuid",
+      "warning": "Low one-time prekeys for device uuid: 2 remaining (threshold 5)."
+    }
+  ],
   "devices": [
     {
       "deviceId": "uuid",
       "identityKey": {"kty": "..."},
       "signedPrekey": {"kty": "..."},
-      "prekeySignature": "base64"
+      "prekeySignature": "base64",
+      "availableOneTimePrekeys": 2,
+      "lowOneTimePrekeys": true,
+      "prekeyWarning": "Low one-time prekeys for device uuid: 2 remaining (threshold 5)."
     }
   ]
 }
@@ -135,6 +145,8 @@ Registers an additional device for an authenticated account.
 ## `GET /v1/devices`
 
 Lists the authenticated account's devices, including revoked devices.
+
+Response includes per-device one-time prekey telemetry and a `prekeyWarnings` array for active low-prekey devices.
 
 ## `DELETE /v1/devices/:deviceId`
 
