@@ -364,7 +364,7 @@ test("deadp0et supports multi-device registration, prekey rotation, and targeted
   assert.match(secondDevice.revokedAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
-test("deadp0et issues and consumes one-time prekeys for recipient bundles", async (t) => {
+test("deadp0et reserves one-time prekeys on bundle issuance and defers consumption to ack", async (t) => {
   const { baseUrl, dataDir } = await startServer(t);
 
   const createRecipient = await requestJson(baseUrl, "/v1/accounts", {
@@ -395,7 +395,7 @@ test("deadp0et issues and consumes one-time prekeys for recipient bundles", asyn
   assert.equal(firstBundle.status, 200);
   assert.equal(firstBundle.body.device.deviceId, "device-noor-1");
   assert.equal(firstBundle.body.oneTimePrekey.keyId, "otk-1");
-  assert.match(firstBundle.body.oneTimePrekeyConsumedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(firstBundle.body.oneTimePrekeyReservedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.match(firstBundle.body.prekeyReservationToken, /^[a-f0-9]{64}$/);
   assert.match(firstBundle.body.prekeyReservationExpiresAt, /^\d{4}-\d{2}-\d{2}T/);
 
@@ -415,7 +415,7 @@ test("deadp0et issues and consumes one-time prekeys for recipient bundles", asyn
   });
   assert.equal(thirdBundle.status, 200);
   assert.equal(thirdBundle.body.oneTimePrekey, null);
-  assert.equal(thirdBundle.body.oneTimePrekeyConsumedAt, null);
+  assert.equal(thirdBundle.body.oneTimePrekeyReservedAt, null);
   assert.match(thirdBundle.body.prekeyReservationToken, /^[a-f0-9]{64}$/);
 
   const storeFile = path.join(dataDir, "store.json");
@@ -423,9 +423,10 @@ test("deadp0et issues and consumes one-time prekeys for recipient bundles", asyn
   const recipient = persisted.accounts.find((account) => account.username === "noor");
   assert.ok(recipient);
   assert.equal(recipient.devices[0].oneTimePrekeys.length, 0);
-  assert.equal(recipient.devices[0].consumedOneTimePrekeys.length, 2);
-  assert.equal(recipient.devices[0].consumedOneTimePrekeys[0].prekey.keyId, "otk-1");
-  assert.equal(recipient.devices[0].consumedOneTimePrekeys[1].prekey.keyId, "otk-2");
+  assert.equal(recipient.devices[0].reservedOneTimePrekeys.length, 2);
+  assert.equal(recipient.devices[0].reservedOneTimePrekeys[0].prekey.keyId, "otk-1");
+  assert.equal(recipient.devices[0].reservedOneTimePrekeys[1].prekey.keyId, "otk-2");
+  assert.equal(recipient.devices[0].consumedOneTimePrekeys.length, 0);
 });
 
 test("deadp0et reports low one-time prekey warnings for active devices", async (t) => {
@@ -516,7 +517,7 @@ test("deadp0et does not duplicate one-time prekeys under concurrent reservations
 });
 
 test("deadp0et enforces prekey reservation tokens for message delivery", async (t) => {
-  const { baseUrl } = await startServer(t);
+  const { baseUrl, dataDir } = await startServer(t);
 
   const sender = await requestJson(baseUrl, "/v1/accounts", {
     method: "POST",
@@ -622,6 +623,44 @@ test("deadp0et enforces prekey reservation tokens for message delivery", async (
   });
   assert.equal(firstSend.status, 201);
 
+  const ackMissingProof = await requestJson(baseUrl, "/v1/messages/inbox/ack", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${recipient.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      messageIds: [firstSend.body.messageId]
+    })
+  });
+  assert.equal(ackMissingProof.status, 400);
+  assert.match(ackMissingProof.body.error.message, /oneTimePrekeyProof is required/i);
+
+  const ackWithProof = await requestJson(baseUrl, "/v1/messages/inbox/ack", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${recipient.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      messageIds: [firstSend.body.messageId],
+      oneTimePrekeyProofs: [
+        {
+          messageId: firstSend.body.messageId,
+          oneTimePrekeyId: "otk-1"
+        }
+      ]
+    })
+  });
+  assert.equal(ackWithProof.status, 200);
+  assert.equal(ackWithProof.body.acknowledged, 1);
+  const storeAfterAck = JSON.parse(fs.readFileSync(path.join(dataDir, "store.json"), "utf8"));
+  const recipientAccount = storeAfterAck.accounts.find((account) => account.username === "noor");
+  assert.ok(recipientAccount);
+  assert.equal(recipientAccount.devices[0].reservedOneTimePrekeys.length, 0);
+  assert.equal(recipientAccount.devices[0].consumedOneTimePrekeys.length, 1);
+  assert.equal(recipientAccount.devices[0].consumedOneTimePrekeys[0].prekey.keyId, "otk-1");
+
   const replaySend = await requestJson(baseUrl, "/v1/messages", {
     method: "POST",
     headers: {
@@ -642,7 +681,7 @@ test("deadp0et enforces prekey reservation tokens for message delivery", async (
     })
   });
   assert.equal(replaySend.status, 409);
-  assert.match(replaySend.body.error.message, /invalid, expired, or already consumed/i);
+  assert.match(replaySend.body.error.message, /invalid, expired, or already consumed|already consumed/i);
 });
 
 test("deadp0et migrates legacy passwordVerifier records on successful login", async (t) => {

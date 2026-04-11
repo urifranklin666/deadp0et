@@ -943,6 +943,20 @@ async function decryptLatest() {
       base64ToBytes(latest.envelope.ciphertext)
     );
     const decoded = JSON.parse(new TextDecoder().decode(plaintext));
+    const ackPayload = {
+      messageIds: [latest.messageId]
+    };
+    if (oneTimePrekeyId) {
+      ackPayload.oneTimePrekeyProofs = [{
+        messageId: latest.messageId,
+        oneTimePrekeyId
+      }];
+    }
+    await apiRequest("/v1/messages/inbox/ack", {
+      method: "POST",
+      body: JSON.stringify(ackPayload)
+    });
+
     if (oneTimePrekeyId) {
       delete state.currentUser.privateKeys.oneTimePrekeyPrivateKeys[oneTimePrekeyId];
       consumeLocalOneTimePrekey(state.currentUser.username, state.currentUser.publicBundle.deviceId, oneTimePrekeyId);

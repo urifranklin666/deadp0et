@@ -93,7 +93,7 @@ Response:
     "prekeySignature": "base64"
   },
   "oneTimePrekey": {"keyId": "otk-1", "key": {"kty": "..."}},
-  "oneTimePrekeyConsumedAt": "2026-04-17T00:00:00.000Z",
+  "oneTimePrekeyReservedAt": "2026-04-17T00:00:00.000Z",
   "prekeyReservationToken": "opaque-reservation-token",
   "prekeyReservationExpiresAt": "2026-04-17T00:10:00.000Z"
 }
@@ -129,12 +129,19 @@ Response fields may include delivery metadata such as `deliveredAt`, `readAt`, a
 ## `POST /v1/messages/inbox/ack`
 
 Marks one or more inbox messages as read for the authenticated device.
+For messages that used a one-time prekey, include a matching proof entry so the server can burn the reserved prekey.
 
 Request:
 
 ```json
 {
-  "messageIds": ["uuid"]
+  "messageIds": ["uuid"],
+  "oneTimePrekeyProofs": [
+    {
+      "messageId": "uuid",
+      "oneTimePrekeyId": "otk-1"
+    }
+  ]
 }
 ```
 
