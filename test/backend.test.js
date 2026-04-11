@@ -224,6 +224,15 @@ test("deadp0et backend API flow", async (t) => {
   assert.equal(login.status, 200);
   assert.match(login.body.session.expiresAt, /^\d{4}-\d{2}-\d{2}T/);
 
+  const health = await requestJson(baseUrl, "/health");
+  assert.equal(health.status, 200);
+  assert.equal(typeof health.body.prekeyReservations, "number");
+  assert.equal(typeof health.body.deliveredPendingAckReservations, "number");
+  assert.equal(typeof health.body.releasedPrekeyReservations, "number");
+  assert.equal(typeof health.body.reservedOneTimePrekeys, "number");
+  assert.equal(typeof health.body.consumedOneTimePrekeys, "number");
+  assert.equal(typeof health.body.expiredMessages, "number");
+
   const storeFile = path.join(dataDir, "store.json");
   const store = JSON.parse(fs.readFileSync(storeFile, "utf8"));
   assert.equal(typeof store.accounts[0].verifier.digest, "string");

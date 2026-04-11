@@ -1247,12 +1247,38 @@ function handleHealth(response) {
   if (reconciled) {
     saveStore(store);
   }
+
+  let reservedOneTimePrekeys = 0;
+  let consumedOneTimePrekeys = 0;
+  for (const account of store.accounts) {
+    for (const device of account.devices || []) {
+      if (Array.isArray(device.reservedOneTimePrekeys)) {
+        reservedOneTimePrekeys += device.reservedOneTimePrekeys.length;
+      }
+      if (Array.isArray(device.consumedOneTimePrekeys)) {
+        consumedOneTimePrekeys += device.consumedOneTimePrekeys.length;
+      }
+    }
+  }
+
+  const activePrekeyReservations = store.prekeyReservations.filter((entry) => !entry.consumedAt && !entry.releasedAt).length;
+  const deliveredPendingAckReservations = store.prekeyReservations.filter(
+    (entry) => entry.deliveredMessageId && !entry.consumedAt && !entry.releasedAt
+  ).length;
+  const releasedPrekeyReservations = store.prekeyReservations.filter((entry) => entry.releasedAt).length;
+  const expiredMessages = store.messages.filter((message) => message.expiredAt).length;
+
   sendJson(response, 200, {
     status: "ok",
     accounts: store.accounts.length,
     sessions: store.sessions.filter((session) => !session.revokedAt && (!session.expiresAt || Date.parse(session.expiresAt) > Date.now())).length,
     messages: store.messages.length,
-    prekeyReservations: store.prekeyReservations.filter((entry) => !entry.consumedAt && Date.parse(entry.expiresAt || 0) > Date.now()).length
+    prekeyReservations: activePrekeyReservations,
+    deliveredPendingAckReservations,
+    releasedPrekeyReservations,
+    reservedOneTimePrekeys,
+    consumedOneTimePrekeys,
+    expiredMessages
   });
 }
 
