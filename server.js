@@ -722,6 +722,11 @@ async function handleCreateSession(request, response) {
 }
 
 function handleGetBundles(response, username) {
+  const reconciled = reconcilePrekeyReservations();
+  if (reconciled) {
+    saveStore(store);
+  }
+
   const account = findAccountByUsername(username);
   if (!account) {
     sendError(response, 404, "Recipient account was not found.");
@@ -738,6 +743,11 @@ function handleGetBundles(response, username) {
 }
 
 async function handleIssuePrekeyBundle(request, response, username) {
+  const reconciled = reconcilePrekeyReservations();
+  if (reconciled) {
+    saveStore(store);
+  }
+
   const account = findAccountByUsername(username);
   if (!account) {
     sendError(response, 404, "Recipient account was not found.");
@@ -901,6 +911,11 @@ async function handleStoreMessage(request, response) {
 }
 
 function handleInbox(request, response) {
+  const reconciled = reconcilePrekeyReservations();
+  if (reconciled) {
+    saveStore(store);
+  }
+
   const auth = requireAuth(request, response);
   if (!auth) {
     return;
@@ -957,6 +972,11 @@ function handleInbox(request, response) {
 }
 
 async function handleAcknowledgeInbox(request, response) {
+  const reconciled = reconcilePrekeyReservations();
+  if (reconciled) {
+    saveStore(store);
+  }
+
   const auth = requireAuth(request, response);
   if (!auth) {
     return;
@@ -1124,6 +1144,11 @@ async function handleRegisterDevice(request, response) {
 }
 
 function handleListDevices(request, response) {
+  const reconciled = reconcilePrekeyReservations();
+  if (reconciled) {
+    saveStore(store);
+  }
+
   const auth = requireAuth(request, response);
   if (!auth) {
     return;

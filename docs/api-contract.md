@@ -70,7 +70,8 @@ Response:
 ## `POST /v1/users/:username/prekey-bundle`
 
 Reserves and returns one delivery bundle for a recipient device. The response includes the signed prekey and at most
-one one-time prekey. If one-time prekeys are depleted, `oneTimePrekey` is `null`.
+one one-time prekey. If one-time prekeys are depleted, `oneTimePrekey` is `null`. Reservation tokens are short-lived;
+expired unused reservations are released back to available prekeys.
 
 Request (optional `deviceId` targeting):
 
@@ -124,7 +125,8 @@ Request:
 
 Returns message envelopes addressed to the authenticated device or account.
 
-Response fields may include delivery metadata such as `deliveredAt`, `readAt`, and `deliveryCount`.
+Response fields may include delivery metadata such as `deliveredAt`, `readAt`, and `deliveryCount`. Messages whose
+reservation TTL has expired before acknowledgement are omitted from inbox results.
 
 ## `POST /v1/messages/inbox/ack`
 

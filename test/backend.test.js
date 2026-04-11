@@ -516,6 +516,137 @@ test("deadp0et does not duplicate one-time prekeys under concurrent reservations
   assert.equal(nullCount, 2);
 });
 
+test("deadp0et releases expired unused prekey reservations back to availability", async (t) => {
+  const { baseUrl } = await startServer(t, {
+    PREKEY_RESERVATION_TTL_MS: "1000"
+  });
+
+  const createRecipient = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "noor",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-noor-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-1",
+        oneTimePrekeys: [{ keyId: "otk-1", key: { kty: "EC", crv: "P-256", x: "one" } }]
+      }
+    })
+  });
+  assert.equal(createRecipient.status, 201);
+
+  const firstReservation = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  assert.equal(firstReservation.status, 200);
+  assert.equal(firstReservation.body.oneTimePrekey.keyId, "otk-1");
+
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+
+  const secondReservation = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  assert.equal(secondReservation.status, 200);
+  assert.equal(secondReservation.body.oneTimePrekey.keyId, "otk-1");
+});
+
+test("deadp0et expires delivered unacked one-time-prekey messages after reservation TTL", async (t) => {
+  const { baseUrl, dataDir } = await startServer(t, {
+    PREKEY_RESERVATION_TTL_MS: "1000"
+  });
+
+  const sender = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-iris-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-iris"
+      }
+    })
+  });
+  assert.equal(sender.status, 201);
+
+  const recipient = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "noor",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-noor-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-noor",
+        oneTimePrekeys: [{ keyId: "otk-1", key: { kty: "EC", crv: "P-256", x: "one" } }]
+      }
+    })
+  });
+  assert.equal(recipient.status, 201);
+
+  const reserved = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  assert.equal(reserved.status, 200);
+
+  const send = await requestJson(baseUrl, "/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${sender.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      to: "noor",
+      recipientDeviceId: "device-noor-1",
+      envelope: {
+        protocol: "deadp0et-envelope-v1",
+        ephemeralKey: { kty: "EC", crv: "P-256" },
+        iv: "demo-iv",
+        ciphertext: "demo-ciphertext",
+        oneTimePrekeyId: "otk-1",
+        prekeyReservationToken: reserved.body.prekeyReservationToken
+      }
+    })
+  });
+  assert.equal(send.status, 201);
+
+  const inboxBeforeExpiry = await requestJson(baseUrl, "/v1/messages/inbox", {
+    headers: {
+      Authorization: `Bearer ${recipient.body.session.accessToken}`
+    }
+  });
+  assert.equal(inboxBeforeExpiry.status, 200);
+  assert.equal(inboxBeforeExpiry.body.messages.length, 1);
+
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+
+  const inboxAfterExpiry = await requestJson(baseUrl, "/v1/messages/inbox", {
+    headers: {
+      Authorization: `Bearer ${recipient.body.session.accessToken}`
+    }
+  });
+  assert.equal(inboxAfterExpiry.status, 200);
+  assert.equal(inboxAfterExpiry.body.messages.length, 0);
+
+  const persisted = JSON.parse(fs.readFileSync(path.join(dataDir, "store.json"), "utf8"));
+  const message = persisted.messages.find((entry) => entry.messageId === send.body.messageId);
+  assert.ok(message);
+  assert.match(message.expiredAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
 test("deadp0et enforces prekey reservation tokens for message delivery", async (t) => {
   const { baseUrl, dataDir } = await startServer(t);
 
