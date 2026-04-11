@@ -101,7 +101,8 @@ Request:
     "protocol": "deadp0et-envelope-v1",
     "ephemeralKey": {"kty": "..."},
     "iv": "base64",
-    "ciphertext": "base64"
+    "ciphertext": "base64",
+    "oneTimePrekeyId": "optional-otk-id"
   }
 }
 ```

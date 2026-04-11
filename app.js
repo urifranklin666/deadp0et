@@ -2,6 +2,7 @@ const STORAGE_KEYS = {
   apiBase: "deadp0et.apiBase",
   localDevices: "deadp0et.localDevices"
 };
+const ONE_TIME_PREKEY_BATCH_SIZE = 8;
 
 const state = {
   currentUser: null,
@@ -170,8 +171,16 @@ async function sha256(text) {
 }
 
 async function deriveAesKey(sharedSecret) {
-  const secretBytes = base64ToBytes(sharedSecret);
-  const digest = await crypto.subtle.digest("SHA-256", secretBytes);
+  const secretParts = Array.isArray(sharedSecret) ? sharedSecret : [sharedSecret];
+  const decodedParts = secretParts.map((secret) => base64ToBytes(secret));
+  const totalLength = decodedParts.reduce((sum, bytes) => sum + bytes.length, 0);
+  const joined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const bytes of decodedParts) {
+    joined.set(bytes, offset);
+    offset += bytes.length;
+  }
+  const digest = await crypto.subtle.digest("SHA-256", joined);
   return crypto.subtle.importKey(
     "raw",
     digest,
@@ -195,6 +204,30 @@ async function importPrivateKey(jwk) {
   );
 }
 
+async function generateOneTimePrekeySet(count = ONE_TIME_PREKEY_BATCH_SIZE) {
+  const publicOneTimePrekeys = [];
+  const privateOneTimePrekeyKeys = {};
+
+  for (let index = 0; index < count; index += 1) {
+    const oneTimePrekeyPair = await crypto.subtle.generateKey(
+      { name: "ECDH", namedCurve: "P-256" },
+      true,
+      ["deriveBits"]
+    );
+    const keyId = crypto.randomUUID();
+    publicOneTimePrekeys.push({
+      keyId,
+      key: await crypto.subtle.exportKey("jwk", oneTimePrekeyPair.publicKey)
+    });
+    privateOneTimePrekeyKeys[keyId] = oneTimePrekeyPair.privateKey;
+  }
+
+  return {
+    publicOneTimePrekeys,
+    privateOneTimePrekeyKeys
+  };
+}
+
 async function generateDeviceBundle() {
   const identity = await crypto.subtle.generateKey(
     { name: "ECDH", namedCurve: "P-256" },
@@ -208,23 +241,31 @@ async function generateDeviceBundle() {
   );
   const identityPublic = await crypto.subtle.exportKey("jwk", identity.publicKey);
   const prekeyPublic = await crypto.subtle.exportKey("jwk", signedPrekey.publicKey);
+  const oneTimePrekeySet = await generateOneTimePrekeySet();
   const prekeySignature = await sha256(JSON.stringify(identityPublic) + JSON.stringify(prekeyPublic));
 
   return {
     privateKeys: {
       identityPrivateKey: identity.privateKey,
-      signedPrekeyPrivateKey: signedPrekey.privateKey
+      signedPrekeyPrivateKey: signedPrekey.privateKey,
+      oneTimePrekeyPrivateKeys: oneTimePrekeySet.privateOneTimePrekeyKeys
     },
     publicBundle: {
       identityKey: identityPublic,
       signedPrekey: prekeyPublic,
       prekeySignature,
+      oneTimePrekeys: oneTimePrekeySet.publicOneTimePrekeys,
       deviceId: crypto.randomUUID()
     }
   };
 }
 
 async function serializeLocalDeviceRecord(username, passwordVerifier, accountId, deviceBundle) {
+  const oneTimePrekeyPrivateKeys = {};
+  for (const [keyId, privateKey] of Object.entries(deviceBundle.privateKeys.oneTimePrekeyPrivateKeys || {})) {
+    oneTimePrekeyPrivateKeys[keyId] = await exportKeyPair(privateKey);
+  }
+
   return {
     username,
     accountId,
@@ -233,7 +274,8 @@ async function serializeLocalDeviceRecord(username, passwordVerifier, accountId,
     publicBundle: deviceBundle.publicBundle,
     privateKeys: {
       identityPrivateKey: await exportKeyPair(deviceBundle.privateKeys.identityPrivateKey),
-      signedPrekeyPrivateKey: await exportKeyPair(deviceBundle.privateKeys.signedPrekeyPrivateKey)
+      signedPrekeyPrivateKey: await exportKeyPair(deviceBundle.privateKeys.signedPrekeyPrivateKey),
+      oneTimePrekeyPrivateKeys
     },
     storedAt: new Date().toISOString()
   };
@@ -244,6 +286,12 @@ async function hydrateLocalDevice(record) {
     return null;
   }
 
+  const oneTimePrekeyPrivateKeys = {};
+  const serializedOneTimePrekeys = record.privateKeys.oneTimePrekeyPrivateKeys || {};
+  for (const [keyId, jwk] of Object.entries(serializedOneTimePrekeys)) {
+    oneTimePrekeyPrivateKeys[keyId] = await importPrivateKey(jwk);
+  }
+
   return {
     username: record.username,
     accountId: record.accountId,
@@ -251,9 +299,21 @@ async function hydrateLocalDevice(record) {
     publicBundle: record.publicBundle,
     privateKeys: {
       identityPrivateKey: await importPrivateKey(record.privateKeys.identityPrivateKey),
-      signedPrekeyPrivateKey: await importPrivateKey(record.privateKeys.signedPrekeyPrivateKey)
+      signedPrekeyPrivateKey: await importPrivateKey(record.privateKeys.signedPrekeyPrivateKey),
+      oneTimePrekeyPrivateKeys
     }
   };
+}
+
+function consumeLocalOneTimePrekey(username, deviceId, keyId) {
+  const record = getLocalDevice(username, deviceId);
+  if (!record?.privateKeys?.oneTimePrekeyPrivateKeys?.[keyId]) {
+    return false;
+  }
+
+  delete record.privateKeys.oneTimePrekeyPrivateKeys[keyId];
+  storeLocalDevice(record);
+  return true;
 }
 
 async function deriveSharedSecret(privateKey, remotePublicJwk) {
@@ -469,6 +529,28 @@ async function fetchBundles(username = lookupUsername.value) {
   }
 }
 
+async function fetchPrekeyBundle(username, deviceId = "") {
+  const normalized = normalizeUsername(username);
+  if (!normalized) {
+    throw new Error("Recipient username is required.");
+  }
+
+  const body = deviceId ? { deviceId } : {};
+  const payload = await apiRequest(`/v1/users/${encodeURIComponent(normalized)}/prekey-bundle`, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+
+  renderLookupResult({
+    username: payload.username,
+    devices: [{
+      ...payload.device,
+      oneTimePrekeys: payload.oneTimePrekey ? [payload.oneTimePrekey] : []
+    }]
+  });
+  return payload;
+}
+
 async function fetchInbox() {
   if (!state.currentUser) {
     setStatus("Sign in before fetching an inbox.", "error");
@@ -566,7 +648,7 @@ async function createAccount() {
       username: payload.username,
       devices: [{
         ...hydrated.publicBundle,
-        oneTimePrekeys: [],
+        oneTimePrekeys: hydrated.publicBundle.oneTimePrekeys || [],
         registeredAt: new Date().toISOString(),
         revokedAt: null
       }]
@@ -640,15 +722,22 @@ async function signIn() {
   }
 }
 
-async function encryptForRecipient(sender, recipientDevice, subject, body) {
+async function encryptForRecipient(sender, recipientBundle, subject, body) {
+  const recipientDevice = recipientBundle.device;
   const ephemeral = await crypto.subtle.generateKey(
     { name: "ECDH", namedCurve: "P-256" },
     true,
     ["deriveBits"]
   );
   const ephemeralPublic = await crypto.subtle.exportKey("jwk", ephemeral.publicKey);
-  const sharedSecret = await deriveSharedSecret(ephemeral.privateKey, recipientDevice.signedPrekey);
-  const aesKey = await deriveAesKey(sharedSecret);
+  const sharedSecrets = [await deriveSharedSecret(ephemeral.privateKey, recipientDevice.signedPrekey)];
+  let oneTimePrekeyId = null;
+  if (recipientBundle.oneTimePrekey && recipientBundle.oneTimePrekey.key) {
+    sharedSecrets.push(await deriveSharedSecret(ephemeral.privateKey, recipientBundle.oneTimePrekey.key));
+    oneTimePrekeyId = recipientBundle.oneTimePrekey.keyId || null;
+  }
+
+  const aesKey = await deriveAesKey(sharedSecrets);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const payload = {
     subject,
@@ -665,6 +754,7 @@ async function encryptForRecipient(sender, recipientDevice, subject, body) {
     to: recipientDevice.username,
     envelopeId: crypto.randomUUID(),
     recipientDeviceId: recipientDevice.deviceId,
+    oneTimePrekeyId,
     ephemeralKey: ephemeralPublic,
     iv: bytesToBase64(iv),
     ciphertext: bytesToBase64(new Uint8Array(ciphertext))
@@ -692,30 +782,27 @@ async function sendMessage() {
   }
 
   sendButton.disabled = true;
-  setStatus(`Resolving recipient bundle for ${to} and encrypting locally...`);
+  setStatus(`Reserving recipient prekey bundle for ${to} and encrypting locally...`);
 
   try {
-    const bundleResponse = await fetchBundles(to);
-    if (!bundleResponse || !bundleResponse.devices.length) {
-      throw new Error("Recipient has no active device bundles.");
+    const prekeyBundle = await fetchPrekeyBundle(to);
+    if (!prekeyBundle || !prekeyBundle.device) {
+      throw new Error("Recipient has no active prekey bundle.");
     }
 
-    const recipientDevice = {
-      username: bundleResponse.username,
-      ...bundleResponse.devices[0]
-    };
-    const envelope = await encryptForRecipient(state.currentUser, recipientDevice, subject, body);
+    const envelope = await encryptForRecipient(state.currentUser, prekeyBundle, subject, body);
 
     const stored = await apiRequest("/v1/messages", {
       method: "POST",
       body: JSON.stringify({
-        to: bundleResponse.username,
-        recipientDeviceId: recipientDevice.deviceId,
+        to: prekeyBundle.username,
+        recipientDeviceId: prekeyBundle.device.deviceId,
         envelope: {
           protocol: envelope.protocol,
           ephemeralKey: envelope.ephemeralKey,
           iv: envelope.iv,
-          ciphertext: envelope.ciphertext
+          ciphertext: envelope.ciphertext,
+          oneTimePrekeyId: envelope.oneTimePrekeyId
         }
       })
     });
@@ -728,10 +815,14 @@ async function sendMessage() {
     envelopeOutput.value = state.lastEnvelope;
     setSummary(
       envelopeSummary,
-      `<strong>${stored.messageId}</strong><br>Stored for <strong>${bundleResponse.username}</strong> on device <strong>${recipientDevice.deviceId}</strong>`
+      `<strong>${stored.messageId}</strong><br>Stored for <strong>${prekeyBundle.username}</strong> on device <strong>${prekeyBundle.device.deviceId}</strong>`
     );
     copyEnvelopeButton.disabled = false;
-    setStatus(`Encrypted envelope stored for ${bundleResponse.username} on device ${recipientDevice.deviceId}.`);
+    setStatus(
+      envelope.oneTimePrekeyId
+        ? `Encrypted envelope stored for ${prekeyBundle.username} on device ${prekeyBundle.device.deviceId} using one-time prekey ${envelope.oneTimePrekeyId}.`
+        : `Encrypted envelope stored for ${prekeyBundle.username} on device ${prekeyBundle.device.deviceId}.`
+    );
     return stored;
   } catch (error) {
     setStatus(error.message, "error");
@@ -754,23 +845,40 @@ async function decryptLatest() {
   }
 
   try {
-    const sharedSecret = await deriveSharedSecret(
+    const sharedSecrets = [await deriveSharedSecret(
       state.currentUser.privateKeys.signedPrekeyPrivateKey,
       latest.envelope.ephemeralKey
-    );
-    const aesKey = await deriveAesKey(sharedSecret);
+    )];
+    const oneTimePrekeyId = typeof latest.envelope.oneTimePrekeyId === "string" ? latest.envelope.oneTimePrekeyId.trim() : "";
+    if (oneTimePrekeyId) {
+      const oneTimePrekeyPrivateKey = state.currentUser.privateKeys.oneTimePrekeyPrivateKeys?.[oneTimePrekeyId];
+      if (!oneTimePrekeyPrivateKey) {
+        throw new Error("Missing local one-time prekey private key required for this envelope.");
+      }
+      sharedSecrets.push(await deriveSharedSecret(oneTimePrekeyPrivateKey, latest.envelope.ephemeralKey));
+    }
+
+    const aesKey = await deriveAesKey(sharedSecrets);
     const plaintext = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv: base64ToBytes(latest.envelope.iv) },
       aesKey,
       base64ToBytes(latest.envelope.ciphertext)
     );
     const decoded = JSON.parse(new TextDecoder().decode(plaintext));
+    if (oneTimePrekeyId) {
+      delete state.currentUser.privateKeys.oneTimePrekeyPrivateKeys[oneTimePrekeyId];
+      consumeLocalOneTimePrekey(state.currentUser.username, state.currentUser.publicBundle.deviceId, oneTimePrekeyId);
+    }
     plaintextOutput.value = JSON.stringify(decoded, null, 2);
     setSummary(
       plaintextSummary,
       `<strong>${decoded.subject}</strong><br>From device <strong>${decoded.senderDeviceId}</strong><br>${decoded.body}`
     );
-    setStatus(`Latest message from ${latest.from} decrypted locally on device ${state.currentUser.session.deviceId}.`);
+    setStatus(
+      oneTimePrekeyId
+        ? `Latest message from ${latest.from} decrypted locally on device ${state.currentUser.session.deviceId} using one-time prekey ${oneTimePrekeyId}.`
+        : `Latest message from ${latest.from} decrypted locally on device ${state.currentUser.session.deviceId}.`
+    );
   } catch (error) {
     plaintextOutput.value = "";
     setSummary(plaintextSummary, "Unable to decrypt the latest message with the current local device key.", true);
@@ -856,7 +964,7 @@ async function applyDeviceAction() {
           deviceId: targetDeviceId,
           signedPrekey: deviceBundle.publicBundle.signedPrekey,
           prekeySignature: deviceBundle.publicBundle.prekeySignature,
-          oneTimePrekeys: []
+          oneTimePrekeys: deviceBundle.publicBundle.oneTimePrekeys || []
         })
       });
       setStatus(`Rotated prekeys for device ${targetDeviceId}.`);

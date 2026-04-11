@@ -674,6 +674,12 @@ async function handleStoreMessage(request, response) {
     return;
   }
 
+  const oneTimePrekeyId = envelope.oneTimePrekeyId;
+  if (oneTimePrekeyId !== undefined && (typeof oneTimePrekeyId !== "string" || !oneTimePrekeyId.trim())) {
+    sendError(response, 400, "envelope.oneTimePrekeyId must be a non-empty string when provided.");
+    return;
+  }
+
   const message = {
     messageId: randomId(),
     to: recipient.username,
@@ -684,7 +690,8 @@ async function handleStoreMessage(request, response) {
       protocol: envelope.protocol,
       ephemeralKey: envelope.ephemeralKey,
       iv: envelope.iv,
-      ciphertext: envelope.ciphertext
+      ciphertext: envelope.ciphertext,
+      oneTimePrekeyId: oneTimePrekeyId ? oneTimePrekeyId.trim() : null
     },
     storedAt: nowIso(),
     deliveredAt: null,
