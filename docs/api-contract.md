@@ -57,6 +57,36 @@ Response:
 }
 ```
 
+## `POST /v1/users/:username/prekey-bundle`
+
+Reserves and returns one delivery bundle for a recipient device. The response includes the signed prekey and at most
+one one-time prekey. If one-time prekeys are depleted, `oneTimePrekey` is `null`.
+
+Request (optional `deviceId` targeting):
+
+```json
+{
+  "deviceId": "uuid"
+}
+```
+
+Response:
+
+```json
+{
+  "username": "noor",
+  "issuedAt": "2026-04-17T00:00:00.000Z",
+  "device": {
+    "deviceId": "uuid",
+    "identityKey": {"kty": "..."},
+    "signedPrekey": {"kty": "..."},
+    "prekeySignature": "base64"
+  },
+  "oneTimePrekey": {"keyId": "otk-1", "key": {"kty": "..."}},
+  "oneTimePrekeyConsumedAt": "2026-04-17T00:00:00.000Z"
+}
+```
+
 ## `POST /v1/messages`
 
 Stores an encrypted envelope for delivery.

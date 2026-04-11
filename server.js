@@ -209,6 +209,32 @@ function getActiveDevices(account) {
   return account.devices.filter((device) => !device.revokedAt);
 }
 
+function ensureDevicePrekeyCollections(device) {
+  if (!Array.isArray(device.oneTimePrekeys)) {
+    device.oneTimePrekeys = [];
+  }
+  if (!Array.isArray(device.consumedOneTimePrekeys)) {
+    device.consumedOneTimePrekeys = [];
+  }
+}
+
+function reserveOneTimePrekey(device) {
+  ensureDevicePrekeyCollections(device);
+  const reservedPrekey = device.oneTimePrekeys.shift();
+  if (!reservedPrekey) {
+    return null;
+  }
+  const consumedAt = nowIso();
+  device.consumedOneTimePrekeys.push({
+    consumedAt,
+    prekey: reservedPrekey
+  });
+  return {
+    prekey: reservedPrekey,
+    consumedAt
+  };
+}
+
 function validateJwkLike(value, fieldName) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return `${fieldName} must be a JSON object.`;
@@ -551,6 +577,58 @@ function handleGetBundles(response, username) {
   sendJson(response, 200, {
     username: account.username,
     devices: getActiveDevices(account).map(getPublicDeviceBundle)
+  });
+}
+
+async function handleIssuePrekeyBundle(request, response, username) {
+  const account = findAccountByUsername(username);
+  if (!account) {
+    sendError(response, 404, "Recipient account was not found.");
+    return;
+  }
+
+  const body = await readJsonBody(request);
+  const requestedDeviceIdRaw = body.deviceId;
+  if (requestedDeviceIdRaw !== undefined && typeof requestedDeviceIdRaw !== "string") {
+    sendError(response, 400, "deviceId must be a string when provided.");
+    return;
+  }
+  const requestedDeviceId = typeof requestedDeviceIdRaw === "string" ? requestedDeviceIdRaw.trim() : "";
+
+  const activeDevices = getActiveDevices(account);
+  if (activeDevices.length === 0) {
+    sendError(response, 404, "Recipient has no active devices.");
+    return;
+  }
+
+  let selectedDevice = null;
+  if (requestedDeviceId) {
+    selectedDevice = activeDevices.find((device) => device.deviceId === requestedDeviceId) || null;
+    if (!selectedDevice) {
+      sendError(response, 404, "Requested device is not active for this recipient.");
+      return;
+    }
+  } else {
+    selectedDevice =
+      activeDevices.find((device) => Array.isArray(device.oneTimePrekeys) && device.oneTimePrekeys.length > 0) || activeDevices[0];
+  }
+
+  const reservedOneTimePrekey = reserveOneTimePrekey(selectedDevice);
+  if (reservedOneTimePrekey) {
+    saveStore(store);
+  }
+
+  sendJson(response, 200, {
+    username: account.username,
+    issuedAt: nowIso(),
+    device: {
+      deviceId: selectedDevice.deviceId,
+      identityKey: selectedDevice.identityKey,
+      signedPrekey: selectedDevice.signedPrekey,
+      prekeySignature: selectedDevice.prekeySignature
+    },
+    oneTimePrekey: reservedOneTimePrekey ? reservedOneTimePrekey.prekey : null,
+    oneTimePrekeyConsumedAt: reservedOneTimePrekey ? reservedOneTimePrekey.consumedAt : null
   });
 }
 
@@ -924,6 +1002,16 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && pathname.startsWith("/v1/users/") && pathname.endsWith("/bundles")) {
       const username = decodeURIComponent(pathname.slice("/v1/users/".length, -"/bundles".length));
       handleGetBundles(response, username);
+      return;
+    }
+
+    if (pathname.startsWith("/v1/users/") && pathname.endsWith("/prekey-bundle")) {
+      if (request.method !== "POST") {
+        methodNotAllowed(response, request.method);
+        return;
+      }
+      const username = decodeURIComponent(pathname.slice("/v1/users/".length, -"/prekey-bundle".length));
+      await handleIssuePrekeyBundle(request, response, username);
       return;
     }
 

@@ -347,6 +347,109 @@ test("deadp0et supports multi-device registration, prekey rotation, and targeted
   assert.match(secondDevice.revokedAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
+test("deadp0et issues and consumes one-time prekeys for recipient bundles", async (t) => {
+  const { baseUrl, dataDir } = await startServer(t);
+
+  const createRecipient = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "noor",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-noor-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-1",
+        oneTimePrekeys: [
+          { keyId: "otk-1", key: { kty: "EC", crv: "P-256", x: "one" } },
+          { keyId: "otk-2", key: { kty: "EC", crv: "P-256", x: "two" } }
+        ]
+      }
+    })
+  });
+  assert.equal(createRecipient.status, 201);
+
+  const firstBundle = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  assert.equal(firstBundle.status, 200);
+  assert.equal(firstBundle.body.device.deviceId, "device-noor-1");
+  assert.equal(firstBundle.body.oneTimePrekey.keyId, "otk-1");
+  assert.match(firstBundle.body.oneTimePrekeyConsumedAt, /^\d{4}-\d{2}-\d{2}T/);
+
+  const secondBundle = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  assert.equal(secondBundle.status, 200);
+  assert.equal(secondBundle.body.oneTimePrekey.keyId, "otk-2");
+
+  const thirdBundle = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  assert.equal(thirdBundle.status, 200);
+  assert.equal(thirdBundle.body.oneTimePrekey, null);
+  assert.equal(thirdBundle.body.oneTimePrekeyConsumedAt, null);
+
+  const storeFile = path.join(dataDir, "store.json");
+  const persisted = JSON.parse(fs.readFileSync(storeFile, "utf8"));
+  const recipient = persisted.accounts.find((account) => account.username === "noor");
+  assert.ok(recipient);
+  assert.equal(recipient.devices[0].oneTimePrekeys.length, 0);
+  assert.equal(recipient.devices[0].consumedOneTimePrekeys.length, 2);
+  assert.equal(recipient.devices[0].consumedOneTimePrekeys[0].prekey.keyId, "otk-1");
+  assert.equal(recipient.devices[0].consumedOneTimePrekeys[1].prekey.keyId, "otk-2");
+});
+
+test("deadp0et does not duplicate one-time prekeys under concurrent reservations", async (t) => {
+  const { baseUrl } = await startServer(t);
+
+  const createRecipient = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "noor",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-noor-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-1",
+        oneTimePrekeys: [
+          { keyId: "otk-a", key: { kty: "EC", crv: "P-256", x: "a" } },
+          { keyId: "otk-b", key: { kty: "EC", crv: "P-256", x: "b" } },
+          { keyId: "otk-c", key: { kty: "EC", crv: "P-256", x: "c" } }
+        ]
+      }
+    })
+  });
+  assert.equal(createRecipient.status, 201);
+
+  const responses = await Promise.all(
+    Array.from({ length: 5 }, () =>
+      requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      })
+    )
+  );
+
+  const successful = responses.filter((response) => response.status === 200);
+  assert.equal(successful.length, 5);
+  const keyIds = successful.map((response) => response.body.oneTimePrekey && response.body.oneTimePrekey.keyId).filter(Boolean);
+  assert.equal(new Set(keyIds).size, 3);
+  assert.deepEqual(new Set(keyIds), new Set(["otk-a", "otk-b", "otk-c"]));
+  const nullCount = successful.filter((response) => response.body.oneTimePrekey === null).length;
+  assert.equal(nullCount, 2);
+});
+
 test("deadp0et migrates legacy passwordVerifier records on successful login", async (t) => {
   const legacyStore = {
     accounts: [
