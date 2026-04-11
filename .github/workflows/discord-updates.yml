@@ -1,0 +1,83 @@
+name: Discord Updates
+
+on:
+  push:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.DISCORD_WEBHOOK_URL != '' }}
+    steps:
+      - name: Send event to Discord
+        uses: actions/github-script@v7
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        with:
+          script: |
+            const eventName = context.eventName;
+            const payload = context.payload;
+            const repoName = `${context.repo.owner}/${context.repo.repo}`;
+            const shortSha = context.sha.slice(0, 7);
+            const runUrl = `${context.serverUrl}/${repoName}/actions/runs/${context.runId}`;
+            let content = "";
+
+            if (eventName === "push") {
+              const branch = (payload.ref || "").replace("refs/heads/", "");
+              const commitLines = (payload.commits || [])
+                .slice(0, 5)
+                .map((commit) => {
+                  const id = (commit.id || "").slice(0, 7);
+                  const message = (commit.message || "").split("\n")[0];
+                  return `- \`${id}\` ${message}`;
+                })
+                .join("\n");
+
+              content =
+                `**${repoName}** push on \`${branch}\` by **${payload.pusher?.name || "unknown"}**\n` +
+                `${commitLines || "- (no commit details in payload)"}\n` +
+                `[Compare](${payload.compare}) | [Workflow run](${runUrl})`;
+            } else if (eventName === "pull_request") {
+              const pr = payload.pull_request;
+              const actionLabel = payload.action === "closed"
+                ? (pr.merged ? "merged" : "closed")
+                : payload.action;
+              content =
+                `**${repoName}** PR #${pr.number} ${actionLabel}\n` +
+                `**${pr.title}**\n` +
+                `Author: **${pr.user?.login || "unknown"}** | Branch: \`${pr.head?.ref}\` -> \`${pr.base?.ref}\`\n` +
+                `[Open PR](${pr.html_url}) | [Workflow run](${runUrl})`;
+            } else if (eventName === "release") {
+              const release = payload.release;
+              content =
+                `**${repoName}** release published: **${release.name || release.tag_name}**\n` +
+                `Tag: \`${release.tag_name}\` | Author: **${release.author?.login || "unknown"}**\n` +
+                `[Release notes](${release.html_url}) | [Workflow run](${runUrl})`;
+            } else {
+              content =
+                `**${repoName}** ${eventName} event at \`${shortSha}\`\n` +
+                `[Workflow run](${runUrl})`;
+            }
+
+            if (content.length > 1900) {
+              content = `${content.slice(0, 1890)}...`;
+            }
+
+            const response = await fetch(process.env.DISCORD_WEBHOOK_URL, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                content,
+                allowed_mentions: { parse: [] }
+              })
+            });
+
+            if (!response.ok) {
+              const body = await response.text();
+              core.setFailed(`Discord webhook failed (${response.status}): ${body}`);
+            }

@@ -109,3 +109,15 @@ The container joins the existing external `proxy` network so Nginx Proxy Manager
 - Sessions are opaque bearer tokens with a fixed expiration window.
 - It does not decrypt message contents.
 - It is intended to give the frontend a real server surface that matches `docs/api-contract.md`.
+
+### Discord GitHub updates
+
+This repo includes a workflow at `.github/workflows/discord-updates.yml` that posts notifications to Discord for:
+
+- pushes
+- pull request opens/updates/merges/closes
+- published releases
+
+To enable it, add a repository secret:
+
+- `DISCORD_WEBHOOK_URL`: your Discord channel webhook URL
