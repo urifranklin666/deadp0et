@@ -6,6 +6,9 @@ const crypto = require("crypto");
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 3000);
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 7 * 24 * 60 * 60 * 1000);
+const MAX_ACTIVE_SESSIONS_PER_ACCOUNT = Math.max(1, Number(process.env.MAX_ACTIVE_SESSIONS_PER_ACCOUNT || 12));
+const MAX_ACTIVE_SESSIONS_PER_DEVICE = Math.max(1, Number(process.env.MAX_ACTIVE_SESSIONS_PER_DEVICE || 4));
+const MAX_PASSWORD_VERIFIER_LENGTH = Number(process.env.MAX_PASSWORD_VERIFIER_LENGTH || 4096);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 const STATIC_FILES = {
@@ -41,14 +44,32 @@ function deriveVerifierRecord(passwordVerifier) {
   };
 }
 
+function isVerifierLengthValid(passwordVerifier) {
+  return typeof passwordVerifier === "string" && passwordVerifier.length > 0 && passwordVerifier.length <= MAX_PASSWORD_VERIFIER_LENGTH;
+}
+
 function verifyVerifierRecord(account, passwordVerifier) {
+  if (!isVerifierLengthValid(passwordVerifier)) {
+    return false;
+  }
+
   if (account.verifier && account.verifier.salt && account.verifier.digest) {
     const candidate = crypto.scryptSync(passwordVerifier, account.verifier.salt, 64).toString("hex");
-    return crypto.timingSafeEqual(Buffer.from(candidate, "hex"), Buffer.from(account.verifier.digest, "hex"));
+    const candidateBuffer = Buffer.from(candidate, "hex");
+    const digestBuffer = Buffer.from(account.verifier.digest, "hex");
+    if (candidateBuffer.length === 0 || digestBuffer.length === 0 || candidateBuffer.length !== digestBuffer.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(candidateBuffer, digestBuffer);
   }
 
   if (typeof account.passwordVerifier === "string" && account.passwordVerifier) {
-    return account.passwordVerifier === passwordVerifier;
+    const accountVerifierBuffer = Buffer.from(account.passwordVerifier, "utf8");
+    const candidateBuffer = Buffer.from(passwordVerifier, "utf8");
+    if (accountVerifierBuffer.length !== candidateBuffer.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(accountVerifierBuffer, candidateBuffer);
   }
 
   return false;
@@ -249,7 +270,71 @@ function requireAuth(request, response) {
     return null;
   }
 
+  const sessionDevice = account.devices.find((device) => device.deviceId === session.deviceId);
+  if (!sessionDevice || sessionDevice.revokedAt) {
+    session.revokedAt = nowIso();
+    saveStore(store);
+    sendError(response, 401, "Session device is no longer active.");
+    return null;
+  }
+
   return { session, account };
+}
+
+function revokeSession(session, revokedAt) {
+  if (!session.revokedAt) {
+    session.revokedAt = revokedAt;
+    return true;
+  }
+  return false;
+}
+
+function pruneSessionsForAccount(accountId) {
+  const revokedAt = nowIso();
+  let changed = false;
+  const activeSessions = [];
+  const activeSessionsByDevice = new Map();
+
+  for (const session of store.sessions) {
+    if (session.accountId !== accountId) {
+      continue;
+    }
+
+    const isExpired = session.expiresAt && Date.parse(session.expiresAt) <= Date.now();
+    if (isExpired) {
+      changed = revokeSession(session, revokedAt) || changed;
+      continue;
+    }
+
+    if (!session.revokedAt) {
+      activeSessions.push(session);
+      const bucket = activeSessionsByDevice.get(session.deviceId) || [];
+      bucket.push(session);
+      activeSessionsByDevice.set(session.deviceId, bucket);
+    }
+  }
+
+  for (const sessionsForDevice of activeSessionsByDevice.values()) {
+    if (sessionsForDevice.length <= MAX_ACTIVE_SESSIONS_PER_DEVICE) {
+      continue;
+    }
+    sessionsForDevice.sort((a, b) => Date.parse(a.createdAt || 0) - Date.parse(b.createdAt || 0));
+    const overflow = sessionsForDevice.length - MAX_ACTIVE_SESSIONS_PER_DEVICE;
+    for (let index = 0; index < overflow; index += 1) {
+      changed = revokeSession(sessionsForDevice[index], revokedAt) || changed;
+    }
+  }
+
+  const stillActiveSessions = activeSessions.filter((session) => !session.revokedAt);
+  if (stillActiveSessions.length > MAX_ACTIVE_SESSIONS_PER_ACCOUNT) {
+    stillActiveSessions.sort((a, b) => Date.parse(a.createdAt || 0) - Date.parse(b.createdAt || 0));
+    const overflow = stillActiveSessions.length - MAX_ACTIVE_SESSIONS_PER_ACCOUNT;
+    for (let index = 0; index < overflow; index += 1) {
+      changed = revokeSession(stillActiveSessions[index], revokedAt) || changed;
+    }
+  }
+
+  return changed;
 }
 
 function issueSession(account, deviceId) {
@@ -264,6 +349,7 @@ function issueSession(account, deviceId) {
     revokedAt: null
   };
   store.sessions.push(session);
+  pruneSessionsForAccount(account.accountId);
   saveStore(store);
   return session;
 }
@@ -285,6 +371,10 @@ async function handleCreateAccount(request, response) {
 
   if (!passwordVerifier) {
     sendError(response, 400, "passwordVerifier is required.");
+    return;
+  }
+  if (!isVerifierLengthValid(passwordVerifier)) {
+    sendError(response, 400, `passwordVerifier must be 1-${MAX_PASSWORD_VERIFIER_LENGTH} characters.`);
     return;
   }
 
@@ -341,6 +431,10 @@ async function handleCreateSession(request, response) {
 
   if (!username || !passwordVerifier) {
     sendError(response, 400, "username and passwordVerifier are required.");
+    return;
+  }
+  if (!isVerifierLengthValid(passwordVerifier)) {
+    sendError(response, 401, "Invalid credentials.");
     return;
   }
 

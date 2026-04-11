@@ -396,3 +396,168 @@ test("deadp0et migrates legacy passwordVerifier records on successful login", as
   assert.equal(typeof migratedStore.accounts[0].verifier.digest, "string");
   assert.equal(migratedStore.accounts[0].verifier.algorithm, "scrypt");
 });
+
+test("deadp0et rejects malformed verifier records without crashing", async (t) => {
+  const malformedStore = {
+    accounts: [
+      {
+        accountId: "malformed-account-1",
+        username: "malformed",
+        verifier: {
+          salt: "salt-1",
+          digest: "abc",
+          algorithm: "scrypt"
+        },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        profile: {
+          joinedAt: "2026-01-01T00:00:00.000Z"
+        },
+        devices: [
+          {
+            deviceId: "malformed-device-1",
+            identityKey: { kty: "EC", crv: "P-256" },
+            signedPrekey: { kty: "EC", crv: "P-256" },
+            prekeySignature: "malformed-sig",
+            oneTimePrekeys: [],
+            registeredAt: "2026-01-01T00:00:00.000Z",
+            revokedAt: null
+          }
+        ]
+      }
+    ],
+    sessions: [],
+    messages: []
+  };
+
+  const { baseUrl } = await startServer(t, {}, malformedStore);
+
+  const login = await requestJson(baseUrl, "/v1/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "malformed",
+      passwordVerifier: "demo-verifier",
+      deviceId: "malformed-device-1"
+    })
+  });
+
+  assert.equal(login.status, 401);
+  assert.match(login.body.error.message, /invalid credentials/i);
+});
+
+test("deadp0et invalidates sessions tied to revoked devices", async (t) => {
+  const staleSessionStore = {
+    accounts: [
+      {
+        accountId: "account-1",
+        username: "iris",
+        verifier: {
+          salt: "abcd",
+          digest: "beef",
+          algorithm: "scrypt"
+        },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        profile: {
+          joinedAt: "2026-01-01T00:00:00.000Z"
+        },
+        devices: [
+          {
+            deviceId: "device-iris-1",
+            identityKey: { kty: "EC", crv: "P-256" },
+            signedPrekey: { kty: "EC", crv: "P-256" },
+            prekeySignature: "sig-1",
+            oneTimePrekeys: [],
+            registeredAt: "2026-01-01T00:00:00.000Z",
+            revokedAt: "2026-01-02T00:00:00.000Z"
+          }
+        ]
+      }
+    ],
+    sessions: [
+      {
+        sessionId: "session-1",
+        accessToken: "stale-token",
+        accountId: "account-1",
+        deviceId: "device-iris-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        revokedAt: null
+      }
+    ],
+    messages: []
+  };
+
+  const { baseUrl, dataDir } = await startServer(t, {}, staleSessionStore);
+  const storeFile = path.join(dataDir, "store.json");
+
+  const inbox = await requestJson(baseUrl, "/v1/messages/inbox", {
+    headers: {
+      Authorization: "Bearer stale-token"
+    }
+  });
+
+  assert.equal(inbox.status, 401);
+  assert.match(inbox.body.error.message, /device is no longer active/i);
+
+  const persisted = JSON.parse(fs.readFileSync(storeFile, "utf8"));
+  assert.match(persisted.sessions[0].revokedAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("deadp0et enforces active session caps by revoking oldest sessions", async (t) => {
+  const { baseUrl, dataDir } = await startServer(t, {
+    MAX_ACTIVE_SESSIONS_PER_ACCOUNT: "2",
+    MAX_ACTIVE_SESSIONS_PER_DEVICE: "2"
+  });
+
+  const create = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-iris-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-1"
+      }
+    })
+  });
+
+  assert.equal(create.status, 201);
+  const firstToken = create.body.session.accessToken;
+
+  const secondLogin = await requestJson(baseUrl, "/v1/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      deviceId: "device-iris-1"
+    })
+  });
+  assert.equal(secondLogin.status, 200);
+
+  const thirdLogin = await requestJson(baseUrl, "/v1/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      deviceId: "device-iris-1"
+    })
+  });
+  assert.equal(thirdLogin.status, 200);
+
+  const firstTokenUse = await requestJson(baseUrl, "/v1/messages/inbox", {
+    headers: {
+      Authorization: `Bearer ${firstToken}`
+    }
+  });
+  assert.equal(firstTokenUse.status, 401);
+
+  const storeFile = path.join(dataDir, "store.json");
+  const persisted = JSON.parse(fs.readFileSync(storeFile, "utf8"));
+  const activeSessions = persisted.sessions.filter((session) => !session.revokedAt);
+  assert.equal(activeSessions.length, 2);
+});
