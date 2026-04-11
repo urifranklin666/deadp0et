@@ -9,6 +9,9 @@ const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 7 * 24 * 60 * 60 * 1
 const MAX_ACTIVE_SESSIONS_PER_ACCOUNT = Math.max(1, Number(process.env.MAX_ACTIVE_SESSIONS_PER_ACCOUNT || 12));
 const MAX_ACTIVE_SESSIONS_PER_DEVICE = Math.max(1, Number(process.env.MAX_ACTIVE_SESSIONS_PER_DEVICE || 4));
 const MAX_PASSWORD_VERIFIER_LENGTH = Number(process.env.MAX_PASSWORD_VERIFIER_LENGTH || 4096);
+const AUTH_WINDOW_MS = Math.max(1000, Number(process.env.AUTH_WINDOW_MS || 10 * 60 * 1000));
+const AUTH_MAX_ATTEMPTS_PER_KEY = Math.max(1, Number(process.env.AUTH_MAX_ATTEMPTS_PER_KEY || 8));
+const AUTH_BLOCK_MS = Math.max(1000, Number(process.env.AUTH_BLOCK_MS || 15 * 60 * 1000));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 const STATIC_FILES = {
@@ -120,6 +123,7 @@ function saveStore(store) {
 }
 
 const store = loadStore();
+const authAttemptState = new Map();
 
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
@@ -358,6 +362,57 @@ function parseUrl(request) {
   return new URL(request.url, `http://${request.headers.host || "localhost"}`);
 }
 
+function getClientIp(request) {
+  const forwardedFor = request.headers["x-forwarded-for"];
+  if (typeof forwardedFor === "string" && forwardedFor.trim()) {
+    return forwardedFor.split(",")[0].trim().toLowerCase();
+  }
+  return (request.socket?.remoteAddress || "unknown").toLowerCase();
+}
+
+function getAuthThrottleKey(request, username) {
+  return `${normalizeUsername(username) || "<unknown>"}|${getClientIp(request)}`;
+}
+
+function cleanupAuthAttempts(nowMs) {
+  for (const [key, entry] of authAttemptState.entries()) {
+    const recentAttempts = entry.attempts.filter((timestampMs) => nowMs - timestampMs <= AUTH_WINDOW_MS);
+    const blockStillActive = entry.blockedUntilMs && entry.blockedUntilMs > nowMs;
+    if (recentAttempts.length === 0 && !blockStillActive) {
+      authAttemptState.delete(key);
+      continue;
+    }
+    entry.attempts = recentAttempts;
+  }
+}
+
+function getAuthThrottleState(key, nowMs) {
+  cleanupAuthAttempts(nowMs);
+  const entry = authAttemptState.get(key);
+  if (!entry) {
+    return { blocked: false, retryAfterMs: 0 };
+  }
+  if (entry.blockedUntilMs && entry.blockedUntilMs > nowMs) {
+    return { blocked: true, retryAfterMs: entry.blockedUntilMs - nowMs };
+  }
+  return { blocked: false, retryAfterMs: 0 };
+}
+
+function registerAuthFailure(key, nowMs) {
+  const entry = authAttemptState.get(key) || { attempts: [], blockedUntilMs: 0 };
+  entry.attempts = entry.attempts.filter((timestampMs) => nowMs - timestampMs <= AUTH_WINDOW_MS);
+  entry.attempts.push(nowMs);
+  if (entry.attempts.length >= AUTH_MAX_ATTEMPTS_PER_KEY) {
+    entry.blockedUntilMs = nowMs + AUTH_BLOCK_MS;
+    entry.attempts = [];
+  }
+  authAttemptState.set(key, entry);
+}
+
+function clearAuthFailures(key) {
+  authAttemptState.delete(key);
+}
+
 async function handleCreateAccount(request, response) {
   const body = await readJsonBody(request);
   const username = normalizeUsername(body.username);
@@ -428,18 +483,30 @@ async function handleCreateSession(request, response) {
   const username = normalizeUsername(body.username);
   const passwordVerifier = typeof body.passwordVerifier === "string" ? body.passwordVerifier.trim() : "";
   const requestedDeviceId = typeof body.deviceId === "string" ? body.deviceId.trim() : "";
+  const throttleKey = getAuthThrottleKey(request, username);
+  const nowMs = Date.now();
+  const throttleState = getAuthThrottleState(throttleKey, nowMs);
+
+  if (throttleState.blocked) {
+    response.setHeader("Retry-After", String(Math.max(1, Math.ceil(throttleState.retryAfterMs / 1000))));
+    sendError(response, 429, "Too many login attempts. Try again later.");
+    return;
+  }
 
   if (!username || !passwordVerifier) {
+    registerAuthFailure(throttleKey, nowMs);
     sendError(response, 400, "username and passwordVerifier are required.");
     return;
   }
   if (!isVerifierLengthValid(passwordVerifier)) {
+    registerAuthFailure(throttleKey, nowMs);
     sendError(response, 401, "Invalid credentials.");
     return;
   }
 
   const account = findAccountByUsername(username);
   if (!account || !verifyVerifierRecord(account, passwordVerifier)) {
+    registerAuthFailure(throttleKey, nowMs);
     sendError(response, 401, "Invalid credentials.");
     return;
   }
@@ -452,11 +519,13 @@ async function handleCreateSession(request, response) {
   }
 
   if (requestedDeviceId && !activeDevices.some((device) => device.deviceId === requestedDeviceId)) {
+    registerAuthFailure(throttleKey, nowMs);
     sendError(response, 404, "Requested device is not active for this account.");
     return;
   }
 
   const session = issueSession(account, requestedDeviceId || activeDevices[0].deviceId);
+  clearAuthFailures(throttleKey);
   if (migratedLegacyVerifier) {
     saveStore(store);
   }

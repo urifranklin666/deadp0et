@@ -561,3 +561,76 @@ test("deadp0et enforces active session caps by revoking oldest sessions", async 
   const activeSessions = persisted.sessions.filter((session) => !session.revokedAt);
   assert.equal(activeSessions.length, 2);
 });
+
+test("deadp0et throttles repeated login failures and recovers after block window", async (t) => {
+  const { baseUrl } = await startServer(t, {
+    AUTH_WINDOW_MS: "60000",
+    AUTH_MAX_ATTEMPTS_PER_KEY: "2",
+    AUTH_BLOCK_MS: "120"
+  });
+
+  const create = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-iris-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-1"
+      }
+    })
+  });
+  assert.equal(create.status, 201);
+
+  const badLoginOne = await fetch(`${baseUrl}/v1/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "bad-verifier",
+      deviceId: "device-iris-1"
+    })
+  });
+  assert.equal(badLoginOne.status, 401);
+
+  const badLoginTwo = await fetch(`${baseUrl}/v1/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "still-bad",
+      deviceId: "device-iris-1"
+    })
+  });
+  assert.equal(badLoginTwo.status, 401);
+
+  const blockedLogin = await fetch(`${baseUrl}/v1/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      deviceId: "device-iris-1"
+    })
+  });
+  const blockedBody = JSON.parse(await blockedLogin.text());
+  assert.equal(blockedLogin.status, 429);
+  assert.match(blockedBody.error.message, /too many login attempts/i);
+  assert.ok(blockedLogin.headers.get("retry-after"));
+
+  await new Promise((resolve) => setTimeout(resolve, 1150));
+
+  const recoveredLogin = await requestJson(baseUrl, "/v1/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      deviceId: "device-iris-1"
+    })
+  });
+  assert.equal(recoveredLogin.status, 200);
+});
