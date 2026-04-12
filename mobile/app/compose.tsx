@@ -1,4 +1,4 @@
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
@@ -27,7 +27,8 @@ type PendingTrust = {
 
 export default function ComposeScreen() {
   const router = useRouter();
-  const [recipient, setRecipient] = useState("");
+  const params = useLocalSearchParams<{ recipient?: string }>();
+  const [recipient, setRecipient] = useState(typeof params.recipient === "string" ? params.recipient : "");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
@@ -204,48 +205,50 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 24,
     gap: 18,
-    backgroundColor: "#f5f0e8"
+    backgroundColor: "#0a0a0a"
   },
   eyebrow: {
     marginTop: 24,
-    color: "#8c3f2b",
+    color: "#cc0000",
     fontSize: 14,
     fontWeight: "700",
     letterSpacing: 1.2,
-    textTransform: "uppercase"
+    textTransform: "uppercase",
+    fontFamily: "Courier"
   },
   title: {
-    color: "#1d1b19",
+    color: "#f5f5f5",
     fontSize: 30,
     fontWeight: "800",
     lineHeight: 36
   },
   description: {
-    color: "#453f39",
+    color: "#b0b0b0",
     fontSize: 16,
     lineHeight: 24
   },
   card: {
     padding: 18,
     borderRadius: 18,
-    backgroundColor: "#fffaf3",
+    backgroundColor: "#111111",
     borderWidth: 1,
-    borderColor: "#dbc8b8",
+    borderColor: "#2a0000",
     gap: 8
   },
   label: {
-    color: "#1d1b19",
+    color: "#f5f5f5",
     fontSize: 15,
-    fontWeight: "700"
+    fontWeight: "700",
+    fontFamily: "Courier"
   },
   input: {
     borderWidth: 1,
-    borderColor: "#dbc8b8",
+    borderColor: "#4d0000",
     borderRadius: 12,
-    backgroundColor: "#fff",
+    backgroundColor: "#0e0e0e",
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: "#1d1b19",
+    color: "#e0e0e0",
     fontSize: 16
   },
   bodyInput: {
@@ -258,11 +261,11 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderRadius: 14,
-    backgroundColor: "#1d1b19",
+    backgroundColor: "#cc0000",
     alignItems: "center"
   },
   buttonText: {
-    color: "#f8f3ec",
+    color: "#ffffff",
     fontSize: 16,
     fontWeight: "700"
   },
@@ -271,32 +274,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#c89c86",
-    backgroundColor: "#fff7f1",
+    borderColor: "#4d0000",
+    backgroundColor: "#111111",
     alignItems: "center"
   },
   secondaryButtonText: {
-    color: "#8c3f2b",
+    color: "#cc0000",
     fontSize: 16,
     fontWeight: "700"
   },
   status: {
-    color: "#8c3f2b",
+    color: "#ff2222",
     fontSize: 14,
     lineHeight: 20
   },
   detail: {
-    color: "#453f39",
+    color: "#b0b0b0",
     fontSize: 14,
     lineHeight: 20
   },
   sectionTitle: {
-    color: "#1d1b19",
+    color: "#f5f5f5",
     fontSize: 18,
-    fontWeight: "700"
+    fontWeight: "700",
+    fontFamily: "Courier"
   },
   output: {
-    color: "#453f39",
+    color: "#b0b0b0",
     fontSize: 12,
     lineHeight: 18,
     fontFamily: "monospace"

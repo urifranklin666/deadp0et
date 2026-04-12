@@ -1,5 +1,5 @@
 import { Link, useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { consumeLocalOneTimePrekeyRecord } from "@deadp0et/protocol-client";
 
@@ -24,6 +24,20 @@ type InboxMessage = {
   };
 };
 
+type DecryptedPayload = {
+  subject?: string;
+  body?: string;
+  sentAt?: string;
+  senderDeviceId?: string;
+};
+
+type Conversation = {
+  correspondent: string;
+  latestStoredAt: string;
+  unreadCount: number;
+  messages: InboxMessage[];
+};
+
 export default function InboxScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -33,7 +47,8 @@ export default function InboxScreen() {
   const [sessionInfo, setSessionInfo] = useState<StoredSessionEnvelope["session"] | null>(null);
   const [apiBase, setApiBase] = useState("");
   const [username, setUsername] = useState("");
-  const [plaintext, setPlaintext] = useState<string | null>(null);
+  const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
+  const [decryptedMessages, setDecryptedMessages] = useState<Record<string, DecryptedPayload>>({});
 
   const restoreAndFetch = useCallback(async () => {
     setLoading(true);
@@ -58,7 +73,7 @@ export default function InboxScreen() {
       setMessages([]);
       setSessionInfo(null);
       setUsername("");
-      setPlaintext(null);
+      setSelectedConversation(null);
       setStatus(error instanceof Error ? error.message : "Unable to restore the mobile inbox.");
     } finally {
       setLoading(false);
@@ -83,7 +98,8 @@ export default function InboxScreen() {
     setMessages([]);
     setSessionInfo(null);
     setUsername("");
-    setPlaintext(null);
+    setDecryptedMessages({});
+    setSelectedConversation(null);
     router.replace("/login");
   }
 
@@ -138,25 +154,55 @@ export default function InboxScreen() {
       }
 
       await restoreAndFetch();
-      setPlaintext(JSON.stringify(decrypted.payload, null, 2));
+      setDecryptedMessages((current) => ({
+        ...current,
+        [message.messageId]: decrypted.payload
+      }));
       setStatus(
         decrypted.oneTimePrekeyId
           ? `Decrypted ${message.messageId} and acknowledged one-time prekey ${decrypted.oneTimePrekeyId}.`
           : `Decrypted ${message.messageId}.`
       );
     } catch (error) {
-      setPlaintext(null);
       setStatus(error instanceof Error ? error.message : "Unable to decrypt the selected envelope.");
     }
   }
+
+  const conversations = useMemo<Conversation[]>(() => {
+    const grouped = new Map<string, InboxMessage[]>();
+    for (const message of messages) {
+      const key = message.from || "unknown";
+      const bucket = grouped.get(key) || [];
+      bucket.push(message);
+      grouped.set(key, bucket);
+    }
+
+    return Array.from(grouped.entries())
+      .map(([correspondent, conversationMessages]) => {
+        const sortedMessages = [...conversationMessages].sort(
+          (left, right) => new Date(right.storedAt).getTime() - new Date(left.storedAt).getTime()
+        );
+        return {
+          correspondent,
+          latestStoredAt: sortedMessages[0]?.storedAt || "",
+          unreadCount: sortedMessages.filter((message) => !message.readAt).length,
+          messages: sortedMessages
+        };
+      })
+      .sort((left, right) => new Date(right.latestStoredAt).getTime() - new Date(left.latestStoredAt).getTime());
+  }, [messages]);
+
+  const activeConversation = conversations.find((conversation) => conversation.correspondent === selectedConversation)
+    || conversations[0]
+    || null;
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.eyebrow}>deadp0et mobile</Text>
       <Text style={styles.title}>Inbox</Text>
       <Text style={styles.description}>
-        This screen restores the saved mobile session and local device record from secure storage, then fetches
-        device-scoped inbox state from the backend.
+        Conversations are grouped by correspondent and styled against the same black-and-red shell as the site. Open a
+        thread, decrypt the messages addressed to this device, and jump straight into a reply.
       </Text>
 
       <View style={styles.card}>
@@ -165,6 +211,7 @@ export default function InboxScreen() {
         <Text style={styles.meta}>Username: {username || "unknown"}</Text>
         <Text style={styles.meta}>Device: {sessionInfo?.deviceId || "not loaded"}</Text>
         <Text style={styles.meta}>Expires: {sessionInfo?.expiresAt || "unknown"}</Text>
+        <Text style={styles.meta}>Threads: {conversations.length}</Text>
       </View>
 
       <View style={styles.actions}>
@@ -184,27 +231,74 @@ export default function InboxScreen() {
       {status ? <Text style={styles.status}>{status}</Text> : null}
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Messages</Text>
-        {!messages.length ? <Text style={styles.empty}>No encrypted envelopes loaded.</Text> : null}
-        {messages.map((message) => (
-          <View key={message.messageId} style={styles.messageCard}>
-            <Text style={styles.messageFrom}>From: {message.from}</Text>
-            <Text style={styles.messageMeta}>Message: {message.messageId}</Text>
-            <Text style={styles.messageMeta}>Stored: {message.storedAt}</Text>
-            <Text style={styles.messageMeta}>Read: {message.readAt || "not yet"}</Text>
-            <Text style={styles.messageMeta}>Deliveries: {message.deliveryCount}</Text>
-            <Text style={styles.messageMeta}>Protocol: {message.envelope?.protocol || "unknown"}</Text>
-            <Pressable onPress={() => handleDecrypt(message).catch(() => {})} style={styles.decryptButton}>
-              <Text style={styles.decryptButtonText}>Decrypt and acknowledge</Text>
+        <Text style={styles.sectionTitle}>Conversations</Text>
+        {!conversations.length ? <Text style={styles.empty}>No encrypted conversations loaded.</Text> : null}
+        <View style={styles.threadList}>
+          {conversations.map((conversation) => (
+            <Pressable
+              key={conversation.correspondent}
+              onPress={() => setSelectedConversation(conversation.correspondent)}
+              style={[
+                styles.threadRow,
+                activeConversation?.correspondent === conversation.correspondent ? styles.threadRowActive : null
+              ]}
+            >
+              <View style={styles.threadAvatar}>
+                <Text style={styles.threadAvatarText}>{conversation.correspondent.slice(0, 1).toUpperCase()}</Text>
+              </View>
+              <View style={styles.threadBody}>
+                <Text style={styles.threadName}>{conversation.correspondent}</Text>
+                <Text style={styles.threadMeta}>
+                  {conversation.messages.length} message(s) · {conversation.unreadCount} unread
+                </Text>
+              </View>
+              <Text style={styles.threadTime}>{new Date(conversation.latestStoredAt).toLocaleDateString()}</Text>
             </Pressable>
-          </View>
-        ))}
+          ))}
+        </View>
       </View>
 
-      {plaintext ? (
+      {activeConversation ? (
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Decrypted payload</Text>
-          <Text style={styles.output}>{plaintext}</Text>
+          <View style={styles.threadHeader}>
+            <View>
+              <Text style={styles.sectionTitle}>{activeConversation.correspondent}</Text>
+              <Text style={styles.meta}>{activeConversation.messages.length} message(s) in thread</Text>
+            </View>
+            <Pressable
+              onPress={() => router.push({ pathname: "/compose", params: { recipient: activeConversation.correspondent } })}
+              style={styles.replyButton}
+            >
+              <Text style={styles.replyButtonText}>Reply</Text>
+            </Pressable>
+          </View>
+
+          {activeConversation.messages.map((message) => {
+            const decrypted = decryptedMessages[message.messageId];
+            return (
+              <View key={message.messageId} style={styles.messageBubble}>
+                <Text style={styles.messageFrom}>{message.from}</Text>
+                <Text style={styles.messageMeta}>
+                  {new Date(message.storedAt).toLocaleString()} · {message.readAt ? "acknowledged" : "queued"}
+                </Text>
+                {decrypted ? (
+                  <>
+                    <Text style={styles.messageSubject}>{decrypted.subject || "(no subject)"}</Text>
+                    <Text style={styles.messageBody}>{decrypted.body || ""}</Text>
+                    <Text style={styles.messageMeta}>Sender device: {decrypted.senderDeviceId || "unknown"}</Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.messageCipherLabel}>Encrypted envelope</Text>
+                    <Text style={styles.messageMeta}>Protocol: {message.envelope?.protocol || "unknown"}</Text>
+                    <Pressable onPress={() => handleDecrypt(message).catch(() => {})} style={styles.decryptButton}>
+                      <Text style={styles.decryptButtonText}>Decrypt and acknowledge</Text>
+                    </Pressable>
+                  </>
+                )}
+              </View>
+            );
+          })}
         </View>
       ) : null}
     </ScrollView>
@@ -216,42 +310,44 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 24,
     gap: 18,
-    backgroundColor: "#f5f0e8"
+    backgroundColor: "#0a0a0a"
   },
   eyebrow: {
     marginTop: 24,
-    color: "#8c3f2b",
+    color: "#cc0000",
     fontSize: 14,
     fontWeight: "700",
     letterSpacing: 1.2,
-    textTransform: "uppercase"
+    textTransform: "uppercase",
+    fontFamily: "Courier"
   },
   title: {
-    color: "#1d1b19",
+    color: "#f5f5f5",
     fontSize: 30,
     fontWeight: "800",
     lineHeight: 36
   },
   description: {
-    color: "#453f39",
+    color: "#b0b0b0",
     fontSize: 16,
     lineHeight: 24
   },
   card: {
     padding: 18,
     borderRadius: 18,
-    backgroundColor: "#fffaf3",
+    backgroundColor: "#111111",
     borderWidth: 1,
-    borderColor: "#dbc8b8",
+    borderColor: "#2a0000",
     gap: 8
   },
   sectionTitle: {
-    color: "#1d1b19",
+    color: "#f5f5f5",
     fontSize: 18,
-    fontWeight: "700"
+    fontWeight: "700",
+    fontFamily: "Courier"
   },
   meta: {
-    color: "#453f39",
+    color: "#9a9a9a",
     fontSize: 14,
     lineHeight: 20
   },
@@ -262,11 +358,11 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderRadius: 14,
-    backgroundColor: "#1d1b19",
+    backgroundColor: "#cc0000",
     alignItems: "center"
   },
   buttonText: {
-    color: "#f8f3ec",
+    color: "#ffffff",
     fontSize: 16,
     fontWeight: "700"
   },
@@ -275,58 +371,144 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#c89c86",
-    backgroundColor: "#fff7f1",
+    borderColor: "#4d0000",
+    backgroundColor: "#111111",
     alignItems: "center"
   },
   secondaryButtonText: {
-    color: "#8c3f2b",
+    color: "#cc0000",
     fontSize: 16,
     fontWeight: "700"
   },
   status: {
-    color: "#8c3f2b",
+    color: "#ff2222",
     fontSize: 14,
     lineHeight: 20
   },
   empty: {
-    color: "#6b6158",
+    color: "#666666",
     fontSize: 15
   },
-  messageCard: {
-    paddingTop: 12,
-    marginTop: 4,
-    borderTopWidth: 1,
-    borderTopColor: "#e5d6ca",
-    gap: 4
+  threadList: {
+    gap: 6
+  },
+  threadRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: "#0e0e0e",
+    borderWidth: 1,
+    borderColor: "#2a0000"
+  },
+  threadRowActive: {
+    borderColor: "#cc0000",
+    backgroundColor: "#1a0000"
+  },
+  threadAvatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#330000",
+    borderWidth: 1,
+    borderColor: "#4d0000",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  threadAvatarText: {
+    color: "#ffffff",
+    fontSize: 18,
+    fontWeight: "700",
+    fontFamily: "Courier"
+  },
+  threadBody: {
+    flex: 1,
+    gap: 2
+  },
+  threadName: {
+    color: "#f5f5f5",
+    fontSize: 16,
+    fontWeight: "700"
+  },
+  threadTime: {
+    color: "#666666",
+    fontSize: 12,
+    fontFamily: "Courier"
+  },
+  threadMeta: {
+    color: "#9a9a9a",
+    fontSize: 13
+  },
+  threadHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
+  },
+  replyButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#cc0000",
+    backgroundColor: "#1a0000"
+  },
+  replyButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "700",
+    fontFamily: "Courier"
+  },
+  messageBubble: {
+    padding: 14,
+    marginTop: 6,
+    borderRadius: 14,
+    backgroundColor: "#0e0e0e",
+    borderWidth: 1,
+    borderColor: "#2a0000",
+    gap: 6
   },
   decryptButton: {
     marginTop: 8,
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 12,
-    backgroundColor: "#efe0d4",
+    backgroundColor: "#1a0000",
+    borderWidth: 1,
+    borderColor: "#4d0000",
     alignItems: "center"
   },
   decryptButtonText: {
-    color: "#8c3f2b",
+    color: "#ff2222",
     fontSize: 14,
-    fontWeight: "700"
+    fontWeight: "700",
+    fontFamily: "Courier"
   },
   messageFrom: {
-    color: "#1d1b19",
+    color: "#f5f5f5",
     fontSize: 15,
     fontWeight: "700"
   },
+  messageSubject: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "700"
+  },
+  messageBody: {
+    color: "#d6d6d6",
+    fontSize: 15,
+    lineHeight: 22
+  },
+  messageCipherLabel: {
+    color: "#cc0000",
+    fontSize: 13,
+    fontWeight: "700",
+    fontFamily: "Courier"
+  },
   messageMeta: {
-    color: "#453f39",
+    color: "#888888",
     fontSize: 13,
     lineHeight: 18
-  },
-  output: {
-    color: "#453f39",
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: "monospace"
   }
 });
