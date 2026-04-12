@@ -6,7 +6,9 @@ COPY package.json ./
 COPY server.js ./
 COPY index.html ./
 COPY app.js ./
+COPY protocol-client.js ./
 COPY styles.css ./
+COPY backend ./backend
 
 RUN mkdir -p /app/data
 
