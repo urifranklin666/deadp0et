@@ -577,6 +577,21 @@ function getSelectedInboxMessage() {
   return state.inbox[state.inbox.length - 1] || null;
 }
 
+function updateInboxMessage(messageId, updater) {
+  let updated = false;
+  state.inbox = state.inbox.map((message) => {
+    if (message.messageId !== messageId) {
+      return message;
+    }
+    updated = true;
+    return updater(message);
+  });
+  if (updated) {
+    renderInbox();
+  }
+  return updated;
+}
+
 async function fetchHealth() {
   healthButton.disabled = true;
   setStatus("Checking backend health...");
@@ -977,6 +992,11 @@ async function decryptLatest() {
       delete state.currentUser.privateKeys.oneTimePrekeyPrivateKeys[oneTimePrekeyId];
       consumeLocalOneTimePrekey(state.currentUser.username, state.currentUser.publicBundle.deviceId, oneTimePrekeyId);
     }
+    updateInboxMessage(selectedMessage.messageId, (message) => ({
+      ...message,
+      decryptedPayload: decoded,
+      decryptedAt: new Date().toISOString()
+    }));
     plaintextOutput.value = JSON.stringify(decoded, null, 2);
     setSummary(
       plaintextSummary,

@@ -689,6 +689,15 @@
 
       threadView.innerHTML = selectedThreadMessages.map((message) => {
         const isSelected = message.messageId === selectedMessageId;
+        const decryptedPayload = message.decryptedPayload && typeof message.decryptedPayload === 'object'
+          ? message.decryptedPayload
+          : null;
+        const bodyText = decryptedPayload
+          ? `${decryptedPayload.subject || 'Untitled'}\n${decryptedPayload.body || ''}`.trim()
+          : 'Encrypted envelope waiting on device selection and local keys.';
+        const decryptedHint = decryptedPayload
+          ? `<span class="thread-message-flag thread-message-flag-success">decrypted</span>`
+          : '';
         const reservationHint = message.envelope?.oneTimePrekeyId
           ? `<span class="thread-message-flag">otp ${escapeHtml(message.envelope.oneTimePrekeyId)}</span>`
           : '';
@@ -697,9 +706,10 @@
             <span class="thread-message-from">${escapeHtml(message.from || 'unknown')}</span>
             <span class="thread-message-time">${escapeHtml(formatThreadTimestamp(message.storedAt))}</span>
           </div>
-          <div class="thread-message-body">Encrypted envelope waiting on device selection and local keys.</div>
+          <div class="thread-message-body ${decryptedPayload ? 'thread-message-body-plaintext' : ''}">${escapeHtml(bodyText)}</div>
           <div class="thread-message-meta">
             <span class="thread-message-id">${escapeHtml(message.messageId || 'pending')}</span>
+            ${decryptedHint}
             ${reservationHint}
           </div>
         </button>`;

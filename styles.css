@@ -573,6 +573,11 @@ body {
   color: rgba(224,224,224,0.78);
   line-height: 1.55;
   font-size: 0.88rem;
+  white-space: pre-wrap;
+}
+
+.thread-message-body-plaintext {
+  color: var(--text-bright);
 }
 
 .thread-message-meta {
@@ -588,6 +593,12 @@ body {
   background: rgba(204,0,0,0.09);
   border: 1px solid rgba(120,0,0,0.52);
   color: rgba(255,180,180,0.72);
+}
+
+.thread-message-flag-success {
+  background: rgba(0, 204, 68, 0.1);
+  border-color: rgba(0, 204, 68, 0.36);
+  color: rgba(170, 255, 196, 0.78);
 }
 
 /* ── Message detail overlay ──────────────────────────────────── */
