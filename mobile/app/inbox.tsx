@@ -53,6 +53,8 @@ type CachedConversationMessage = {
   decryptedPayload?: DecryptedPayload | null;
   locallyReadAt?: string | null;
   localOnly?: boolean;
+  deliveryState?: "sending" | "sent" | "failed";
+  deliveryError?: string | null;
 };
 
 type Conversation = {
@@ -193,7 +195,7 @@ export default function InboxScreen() {
 
       const liveMessageEntries = Object.values(mergedMessages).filter((entry) => !entry.localOnly);
       for (const [messageId, cachedMessage] of Object.entries(mergedMessages)) {
-        if (!cachedMessage.localOnly) {
+        if (!cachedMessage.localOnly || cachedMessage.deliveryState === "failed") {
           continue;
         }
 
@@ -458,18 +460,34 @@ export default function InboxScreen() {
           {activeConversation.messages.map((message) => {
             const decrypted = message.decryptedPayload || null;
             const outgoing = Boolean(message.localOnly);
-            const messageState = message.readAt
-              ? "acknowledged"
-              : message.locallyReadAt
-                ? "locally read"
-                : "unread";
+            const messageState = outgoing
+              ? message.deliveryState || "sent"
+              : message.readAt
+                ? "acknowledged"
+                : message.locallyReadAt
+                  ? "locally read"
+                  : "unread";
             return (
               <View key={message.messageId} style={[styles.messageRow, outgoing ? styles.messageRowOutgoing : styles.messageRowIncoming]}>
                 <View style={[styles.messageBubble, outgoing ? styles.messageBubbleOutgoing : styles.messageBubbleIncoming]}>
                 <Text style={[styles.messageFrom, outgoing ? styles.messageFromOutgoing : null]}>{outgoing ? "You" : message.from}</Text>
                 <Text style={[styles.messageMeta, outgoing ? styles.messageMetaOutgoing : null]}>
-                  {new Date(message.storedAt).toLocaleString()} · {outgoing ? "sent locally" : messageState}
+                  {new Date(message.storedAt).toLocaleString()} · {messageState}
                 </Text>
+                {outgoing ? (
+                  <Text
+                    style={[
+                      styles.deliveryPill,
+                      messageState === "failed"
+                        ? styles.deliveryPillFailed
+                        : messageState === "sending"
+                          ? styles.deliveryPillSending
+                          : styles.deliveryPillSent
+                    ]}
+                  >
+                    {messageState.toUpperCase()}
+                  </Text>
+                ) : null}
                 {decrypted ? (
                   <>
                     <Text style={[styles.messageSubject, outgoing ? styles.messageSubjectOutgoing : null]}>{decrypted.subject || "(no subject)"}</Text>
@@ -477,6 +495,9 @@ export default function InboxScreen() {
                     <Text style={[styles.messageMeta, outgoing ? styles.messageMetaOutgoing : null]}>
                       Sender device: {decrypted.senderDeviceId || "unknown"}
                     </Text>
+                    {outgoing && message.deliveryError ? (
+                      <Text style={styles.deliveryError}>{message.deliveryError}</Text>
+                    ) : null}
                   </>
                 ) : (
                   <>
@@ -760,5 +781,31 @@ const styles = StyleSheet.create({
   },
   messageMetaOutgoing: {
     color: "#d88"
+  },
+  deliveryPill: {
+    alignSelf: "flex-start",
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    fontSize: 11,
+    fontWeight: "700",
+    fontFamily: "Courier"
+  },
+  deliveryPillSending: {
+    backgroundColor: "#332200",
+    color: "#ffcc66"
+  },
+  deliveryPillSent: {
+    backgroundColor: "#1f2a00",
+    color: "#9fe870"
+  },
+  deliveryPillFailed: {
+    backgroundColor: "#330000",
+    color: "#ff6666"
+  },
+  deliveryError: {
+    color: "#ff7777",
+    fontSize: 12,
+    lineHeight: 18
   }
 });

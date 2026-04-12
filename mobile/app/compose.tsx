@@ -63,6 +63,8 @@ type CachedConversationMessage = {
   } | null;
   locallyReadAt?: string | null;
   localOnly?: boolean;
+  deliveryState?: "sending" | "sent" | "failed";
+  deliveryError?: string | null;
 };
 
 type ConversationCacheState = {
@@ -195,6 +197,8 @@ export default function ComposeScreen() {
     setPendingTrust(null);
     setTrustNote(null);
 
+    let pendingLocalMessageId = "";
+
     try {
       const auth = await loadStoredAuthState();
       if (!auth.hydratedDevice) {
@@ -232,6 +236,44 @@ export default function ComposeScreen() {
         body: trimmedBody
       });
 
+      const rawConversationCache = await loadConversationCache();
+      const conversationCache = normalizeConversationCache(rawConversationCache);
+      const sentAt = new Date().toISOString();
+      pendingLocalMessageId = `local-sent:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+      const pendingMessages = {
+        ...(conversationCache.messages || {}),
+        [pendingLocalMessageId]: {
+          messageId: pendingLocalMessageId,
+          from: prekeyBundle.username,
+          recipientDeviceId: prekeyBundle.device.deviceId,
+          storedAt: sentAt,
+          deliveredAt: null,
+          readAt: null,
+          deliveryCount: 0,
+          envelope: {
+            protocol: envelope.protocol,
+            ephemeralKey: envelope.ephemeralKey,
+            iv: envelope.iv,
+            ciphertext: envelope.ciphertext,
+            oneTimePrekeyId: envelope.oneTimePrekeyId
+          },
+          decryptedPayload: {
+            subject: trimmedSubject,
+            body: trimmedBody,
+            sentAt,
+            senderDeviceId: auth.hydratedDevice.publicBundle.deviceId
+          },
+          locallyReadAt: sentAt,
+          localOnly: true,
+          deliveryState: "sending",
+          deliveryError: null
+        }
+      };
+      await saveConversationCache(JSON.stringify({
+        selectedConversation: prekeyBundle.username,
+        messages: pendingMessages
+      }));
+
       const stored = await api.storeMessage({
         to: prekeyBundle.username,
         recipientDeviceId: prekeyBundle.device.deviceId,
@@ -256,19 +298,17 @@ export default function ComposeScreen() {
           : `Encrypted envelope stored for ${prekeyBundle.username} on ${prekeyBundle.device.deviceId}.`
       );
 
-      const rawConversationCache = await loadConversationCache();
-      const conversationCache = normalizeConversationCache(rawConversationCache);
-      const sentAt = new Date().toISOString();
-      const localMessageId = `local-sent:${stored.messageId}`;
+      const refreshedConversationCache = normalizeConversationCache(await loadConversationCache());
       const nextMessages = {
-        ...(conversationCache.messages || {}),
-        [localMessageId]: {
-          messageId: localMessageId,
+        ...(refreshedConversationCache.messages || {}),
+        [pendingLocalMessageId]: {
+          ...(refreshedConversationCache.messages[pendingLocalMessageId] || {}),
+          messageId: pendingLocalMessageId,
           from: prekeyBundle.username,
           recipientDeviceId: prekeyBundle.device.deviceId,
           storedAt: stored.storedAt || sentAt,
-          deliveredAt: sentAt,
-          readAt: sentAt,
+          deliveredAt: stored.storedAt || sentAt,
+          readAt: null,
           deliveryCount: 1,
           envelope: {
             protocol: envelope.protocol,
@@ -284,7 +324,9 @@ export default function ComposeScreen() {
             senderDeviceId: auth.hydratedDevice.publicBundle.deviceId
           },
           locallyReadAt: sentAt,
-          localOnly: true
+          localOnly: true,
+          deliveryState: "sent",
+          deliveryError: null
         }
       };
       await saveConversationCache(JSON.stringify({
@@ -301,7 +343,24 @@ export default function ComposeScreen() {
       setBody("");
       router.replace("/inbox");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Unable to send the encrypted envelope.");
+      const message = error instanceof Error ? error.message : "Unable to send the encrypted envelope.";
+      if (pendingLocalMessageId) {
+        const conversationCache = normalizeConversationCache(await loadConversationCache());
+        if (conversationCache.messages[pendingLocalMessageId]) {
+          await saveConversationCache(JSON.stringify({
+            selectedConversation: to || conversationCache.selectedConversation || null,
+            messages: {
+              ...conversationCache.messages,
+              [pendingLocalMessageId]: {
+                ...conversationCache.messages[pendingLocalMessageId],
+                deliveryState: "failed",
+                deliveryError: message
+              }
+            }
+          }));
+        }
+      }
+      setStatus(message);
     } finally {
       setBusy(false);
     }
