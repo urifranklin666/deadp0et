@@ -497,10 +497,13 @@ async function replenishLocalPrekeys(deviceId) {
 
 function renderSession() {
   if (!state.currentUser) {
+    window.__deadp0etCurrentUsername = "";
     sessionOutput.value = "No active session.";
     setSummary(sessionSummary, "No active account session.", true);
     return;
   }
+
+  window.__deadp0etCurrentUsername = state.currentUser.username;
 
   sessionOutput.value = JSON.stringify({
     apiBase: getApiBase(),
@@ -590,6 +593,14 @@ function updateInboxMessage(messageId, updater) {
     renderInbox();
   }
   return updated;
+}
+
+function appendLocalSentMessage(message) {
+  state.inbox = [...state.inbox, message];
+  if (selectedMessageIdInput) {
+    selectedMessageIdInput.value = message.messageId || "";
+  }
+  renderInbox();
 }
 
 async function fetchHealth() {
@@ -921,6 +932,29 @@ async function sendMessage() {
       storedAt: stored.storedAt,
       messageId: stored.messageId
     }, null, 2);
+    appendLocalSentMessage({
+      messageId: stored.messageId,
+      from: state.currentUser.username,
+      to: prekeyBundle.username,
+      storedAt: stored.storedAt,
+      deliveredAt: stored.storedAt,
+      localOnly: true,
+      deliveryState: "sent",
+      envelope: {
+        protocol: envelope.protocol,
+        ephemeralKey: envelope.ephemeralKey,
+        iv: envelope.iv,
+        ciphertext: envelope.ciphertext,
+        oneTimePrekeyId: envelope.oneTimePrekeyId,
+        prekeyReservationToken: envelope.prekeyReservationToken
+      },
+      decryptedPayload: {
+        subject,
+        body,
+        sentAt: new Date().toISOString(),
+        senderDeviceId: state.currentUser.publicBundle.deviceId
+      }
+    });
     envelopeOutput.value = state.lastEnvelope;
     setSummary(
       envelopeSummary,

@@ -543,6 +543,11 @@ body {
   box-shadow: 0 0 0 1px rgba(255,34,34,0.16), 0 8px 24px rgba(80,0,0,0.28);
 }
 
+.thread-message-card-outgoing {
+  border-color: rgba(120, 0, 0, 0.9);
+  background: linear-gradient(180deg, rgba(44,10,10,0.9) 0%, rgba(24,8,8,0.94) 100%);
+}
+
 .thread-message-top,
 .thread-message-meta {
   display: flex;
@@ -599,6 +604,12 @@ body {
   background: rgba(0, 204, 68, 0.1);
   border-color: rgba(0, 204, 68, 0.36);
   color: rgba(170, 255, 196, 0.78);
+}
+
+.thread-message-flag-outgoing {
+  background: rgba(204, 0, 0, 0.14);
+  border-color: rgba(180, 0, 0, 0.42);
+  color: rgba(255, 196, 196, 0.82);
 }
 
 /* ── Message detail overlay ──────────────────────────────────── */

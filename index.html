@@ -584,7 +584,10 @@
     function buildThreadState(messages) {
       const threads = new Map();
       messages.forEach((message, index) => {
-        const threadKey = String(message.from || 'unknown');
+        const currentUsername = String(window.__deadp0etCurrentUsername || '').trim().toLowerCase();
+        const from = String(message.from || 'unknown');
+        const to = String(message.to || '');
+        const threadKey = from.toLowerCase() === currentUsername && to ? to : from;
         const existing = threads.get(threadKey) || {
           key: threadKey,
           sender: threadKey,
@@ -665,7 +668,7 @@
 
       threadCountLabel.textContent = `${threads.length} thread${threads.length === 1 ? '' : 's'}`;
       threadViewTitle.textContent = selectedThread.sender;
-      threadMessageCountLabel.textContent = `${selectedThreadMessages.length} encrypted item${selectedThreadMessages.length === 1 ? '' : 's'}`;
+      threadMessageCountLabel.textContent = `${selectedThreadMessages.length} item${selectedThreadMessages.length === 1 ? '' : 's'}`;
 
       inboxList.innerHTML = threads.map((thread) => {
         const sender = thread.sender || 'unknown';
@@ -673,7 +676,16 @@
         const colors = ['#cc0000','#880000','#4d0000','#aa2200','#991100'];
         const color = colors[sender.charCodeAt(0) % colors.length];
         const ts = formatThreadTimestamp(thread.latest?.storedAt);
-        const preview = thread.latest?.envelope ? '[encrypted envelope]' : JSON.stringify(thread.latest || {}).slice(0, 48) + '...';
+        const latestPayload = thread.latest?.decryptedPayload && typeof thread.latest.decryptedPayload === 'object'
+          ? thread.latest.decryptedPayload
+          : null;
+        const preview = latestPayload
+          ? `${latestPayload.subject || ''} ${latestPayload.body || ''}`.trim()
+          : thread.latest?.localOnly
+            ? '[sent locally]'
+            : thread.latest?.envelope
+              ? '[encrypted envelope]'
+              : JSON.stringify(thread.latest || {}).slice(0, 48) + '...';
         return `<button class="inbox-row ${thread.key === selectedThreadKey ? 'active' : ''}" data-thread-key="${escapeHtml(thread.key)}" type="button">
           <div class="inbox-avatar" style="background:${color}" aria-hidden="true">${initials}</div>
           <div class="inbox-row-body">
@@ -692,24 +704,29 @@
         const decryptedPayload = message.decryptedPayload && typeof message.decryptedPayload === 'object'
           ? message.decryptedPayload
           : null;
+        const isOutgoing = Boolean(message.localOnly);
         const bodyText = decryptedPayload
           ? `${decryptedPayload.subject || 'Untitled'}\n${decryptedPayload.body || ''}`.trim()
           : 'Encrypted envelope waiting on device selection and local keys.';
         const decryptedHint = decryptedPayload
           ? `<span class="thread-message-flag thread-message-flag-success">decrypted</span>`
           : '';
+        const deliveryHint = isOutgoing
+          ? `<span class="thread-message-flag thread-message-flag-outgoing">${escapeHtml(message.deliveryState || 'sent')}</span>`
+          : '';
         const reservationHint = message.envelope?.oneTimePrekeyId
           ? `<span class="thread-message-flag">otp ${escapeHtml(message.envelope.oneTimePrekeyId)}</span>`
           : '';
-        return `<button class="thread-message-card ${isSelected ? 'active' : ''}" type="button" data-message-id="${escapeHtml(message.messageId || '')}">
+        return `<button class="thread-message-card ${isSelected ? 'active' : ''} ${isOutgoing ? 'thread-message-card-outgoing' : ''}" type="button" data-message-id="${escapeHtml(message.messageId || '')}">
           <div class="thread-message-top">
-            <span class="thread-message-from">${escapeHtml(message.from || 'unknown')}</span>
+            <span class="thread-message-from">${escapeHtml(isOutgoing ? 'you' : (message.from || 'unknown'))}</span>
             <span class="thread-message-time">${escapeHtml(formatThreadTimestamp(message.storedAt))}</span>
           </div>
           <div class="thread-message-body ${decryptedPayload ? 'thread-message-body-plaintext' : ''}">${escapeHtml(bodyText)}</div>
           <div class="thread-message-meta">
             <span class="thread-message-id">${escapeHtml(message.messageId || 'pending')}</span>
             ${decryptedHint}
+            ${deliveryHint}
             ${reservationHint}
           </div>
         </button>`;
