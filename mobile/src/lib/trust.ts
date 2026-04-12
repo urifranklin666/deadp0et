@@ -30,6 +30,8 @@ type TrustRecord = {
   status?: string;
 };
 
+export type StoredTrustRecord = TrustRecord;
+
 function sortObjectDeep(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(sortObjectDeep);
@@ -99,4 +101,21 @@ export async function trustCurrentMobileDevice(username: string, device: TrustDe
     fingerprint,
     safetyNumber
   };
+}
+
+export async function loadMobileTrustRecords() {
+  const records = JSON.parse((await loadContactTrust()) || "{}") as Record<string, TrustRecord>;
+  return Object.values(records).sort((left, right) => {
+    const leftTime = new Date(left.lastSeenAt || left.trustedAt || left.firstSeenAt || 0).getTime();
+    const rightTime = new Date(right.lastSeenAt || right.trustedAt || right.firstSeenAt || 0).getTime();
+    return rightTime - leftTime;
+  });
+}
+
+export async function removeMobileTrustRecord(username: string, deviceId: string) {
+  const normalizedUsername = normalizeUsername(username);
+  const records = JSON.parse((await loadContactTrust()) || "{}") as Record<string, TrustRecord>;
+  const nextRecords = { ...records };
+  delete nextRecords[`${normalizedUsername}#${String(deviceId || "").trim()}`];
+  await saveContactTrust(JSON.stringify(nextRecords));
 }

@@ -26,6 +26,7 @@ export default function HomeScreen() {
         <NavLink href="/login" label="Log in" />
         <NavLink href="/inbox" label="Inbox" />
         <NavLink href="/compose" label="Compose" />
+        <NavLink href="/trust" label="Trusted devices" />
         <NavLink href="/devices" label="Devices shell" />
         <NavLink href="/settings" label="Settings shell" />
       </View>
@@ -37,7 +38,7 @@ function NavLink({
   href,
   label
 }: {
-  href: "/signup" | "/login" | "/inbox" | "/compose" | "/devices" | "/settings";
+  href: "/signup" | "/login" | "/inbox" | "/compose" | "/trust" | "/devices" | "/settings";
   label: string;
 }) {
   return (
