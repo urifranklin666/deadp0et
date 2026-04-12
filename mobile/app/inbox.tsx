@@ -126,6 +126,17 @@ function formatThreadTimestamp(isoDate: string) {
     : date.toLocaleDateString();
 }
 
+function isSameMessageContent(left: CachedConversationMessage, right: CachedConversationMessage) {
+  const leftPayload = left.decryptedPayload || {};
+  const rightPayload = right.decryptedPayload || {};
+  return (
+    left.from === right.from
+    && left.recipientDeviceId === right.recipientDeviceId
+    && String(leftPayload.subject || "") === String(rightPayload.subject || "")
+    && String(leftPayload.body || "") === String(rightPayload.body || "")
+  );
+}
+
 export default function InboxScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -178,6 +189,18 @@ export default function InboxScreen() {
           decryptedPayload: existing?.decryptedPayload || null,
           locallyReadAt: existing?.locallyReadAt || null
         };
+      }
+
+      const liveMessageEntries = Object.values(mergedMessages).filter((entry) => !entry.localOnly);
+      for (const [messageId, cachedMessage] of Object.entries(mergedMessages)) {
+        if (!cachedMessage.localOnly) {
+          continue;
+        }
+
+        const replacement = liveMessageEntries.find((entry) => isSameMessageContent(entry, cachedMessage));
+        if (replacement) {
+          delete mergedMessages[messageId];
+        }
       }
 
       setMessages(liveMessages);
@@ -434,32 +457,39 @@ export default function InboxScreen() {
 
           {activeConversation.messages.map((message) => {
             const decrypted = message.decryptedPayload || null;
+            const outgoing = Boolean(message.localOnly);
             const messageState = message.readAt
               ? "acknowledged"
               : message.locallyReadAt
                 ? "locally read"
                 : "unread";
             return (
-              <View key={message.messageId} style={styles.messageBubble}>
-                <Text style={styles.messageFrom}>{message.localOnly ? "You" : message.from}</Text>
-                <Text style={styles.messageMeta}>
-                  {new Date(message.storedAt).toLocaleString()} · {message.localOnly ? "sent locally" : messageState}
+              <View key={message.messageId} style={[styles.messageRow, outgoing ? styles.messageRowOutgoing : styles.messageRowIncoming]}>
+                <View style={[styles.messageBubble, outgoing ? styles.messageBubbleOutgoing : styles.messageBubbleIncoming]}>
+                <Text style={[styles.messageFrom, outgoing ? styles.messageFromOutgoing : null]}>{outgoing ? "You" : message.from}</Text>
+                <Text style={[styles.messageMeta, outgoing ? styles.messageMetaOutgoing : null]}>
+                  {new Date(message.storedAt).toLocaleString()} · {outgoing ? "sent locally" : messageState}
                 </Text>
                 {decrypted ? (
                   <>
-                    <Text style={styles.messageSubject}>{decrypted.subject || "(no subject)"}</Text>
-                    <Text style={styles.messageBody}>{decrypted.body || ""}</Text>
-                    <Text style={styles.messageMeta}>Sender device: {decrypted.senderDeviceId || "unknown"}</Text>
+                    <Text style={[styles.messageSubject, outgoing ? styles.messageSubjectOutgoing : null]}>{decrypted.subject || "(no subject)"}</Text>
+                    <Text style={[styles.messageBody, outgoing ? styles.messageBodyOutgoing : null]}>{decrypted.body || ""}</Text>
+                    <Text style={[styles.messageMeta, outgoing ? styles.messageMetaOutgoing : null]}>
+                      Sender device: {decrypted.senderDeviceId || "unknown"}
+                    </Text>
                   </>
                 ) : (
                   <>
                     <Text style={styles.messageCipherLabel}>Encrypted envelope</Text>
-                    <Text style={styles.messageMeta}>Protocol: {message.envelope?.protocol || "unknown"}</Text>
+                    <Text style={[styles.messageMeta, outgoing ? styles.messageMetaOutgoing : null]}>
+                      Protocol: {message.envelope?.protocol || "unknown"}
+                    </Text>
                     <Pressable onPress={() => handleDecrypt(message).catch(() => {})} style={styles.decryptButton}>
                       <Text style={styles.decryptButtonText}>Decrypt and acknowledge</Text>
                     </Pressable>
                   </>
                 )}
+                </View>
               </View>
             );
           })}
@@ -650,13 +680,32 @@ const styles = StyleSheet.create({
     fontFamily: "Courier"
   },
   messageBubble: {
+    width: "100%",
     padding: 14,
     marginTop: 6,
     borderRadius: 14,
-    backgroundColor: "#0e0e0e",
     borderWidth: 1,
-    borderColor: "#2a0000",
     gap: 6
+  },
+  messageRow: {
+    flexDirection: "row",
+    width: "100%"
+  },
+  messageRowIncoming: {
+    justifyContent: "flex-start"
+  },
+  messageRowOutgoing: {
+    justifyContent: "flex-end"
+  },
+  messageBubbleIncoming: {
+    maxWidth: "92%",
+    backgroundColor: "#0e0e0e",
+    borderColor: "#2a0000"
+  },
+  messageBubbleOutgoing: {
+    maxWidth: "92%",
+    backgroundColor: "#1a0000",
+    borderColor: "#4d0000"
   },
   decryptButton: {
     marginTop: 8,
@@ -679,15 +728,24 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700"
   },
+  messageFromOutgoing: {
+    color: "#ffb3b3"
+  },
   messageSubject: {
     color: "#ffffff",
     fontSize: 16,
     fontWeight: "700"
   },
+  messageSubjectOutgoing: {
+    color: "#ffe0e0"
+  },
   messageBody: {
     color: "#d6d6d6",
     fontSize: 15,
     lineHeight: 22
+  },
+  messageBodyOutgoing: {
+    color: "#f5d0d0"
   },
   messageCipherLabel: {
     color: "#cc0000",
@@ -699,5 +757,8 @@ const styles = StyleSheet.create({
     color: "#888888",
     fontSize: 13,
     lineHeight: 18
+  },
+  messageMetaOutgoing: {
+    color: "#d88"
   }
 });
