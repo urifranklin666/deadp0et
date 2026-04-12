@@ -2,8 +2,13 @@ import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { appendOneTimePrekeysToStoredRecord, generateOneTimePrekeySet } from "../src/lib/crypto";
-import { loadLocalDevice, saveLocalDevice } from "../src/lib/secure-storage";
+import {
+  appendOneTimePrekeysToStoredRecord,
+  generateDeviceBundle,
+  generateOneTimePrekeySet,
+  serializeMobileDeviceRecord
+} from "../src/lib/crypto";
+import { loadLocalDevice, saveLocalDevice, saveSession } from "../src/lib/secure-storage";
 import { createMobileApi, loadStoredAuthState } from "../src/lib/session";
 
 type DeviceRecord = {
@@ -63,6 +68,56 @@ export default function DevicesScreen() {
       loadDevices().catch(() => {});
     }, [loadDevices])
   );
+
+  async function handleRegisterNewDevice() {
+    const actionKey = "register-device";
+    setBusyAction(actionKey);
+    setStatus("Generating and registering a new device on this phone...");
+
+    try {
+      const auth = await loadStoredAuthState();
+      const passwordVerifier = auth.localDeviceRecord.passwordVerifier;
+      const accountId = auth.localDeviceRecord.accountId;
+
+      if (!passwordVerifier || !accountId || !auth.localDeviceRecord.username) {
+        throw new Error("Local device record is missing account credentials required to enroll a new device.");
+      }
+
+      const deviceBundle = await generateDeviceBundle();
+      const api = createMobileApi(auth.apiBase, auth.session.accessToken);
+      await api.registerDevice({
+        device: deviceBundle.publicBundle
+      });
+
+      const nextSessionPayload = await api.createSession({
+        username: auth.localDeviceRecord.username,
+        passwordVerifier,
+        deviceId: deviceBundle.publicBundle.deviceId
+      });
+
+      const localRecord = await serializeMobileDeviceRecord({
+        username: auth.localDeviceRecord.username,
+        passwordVerifier,
+        accountId,
+        deviceBundle
+      });
+
+      await saveLocalDevice(JSON.stringify(localRecord));
+      await saveSession(JSON.stringify({
+        apiBase: auth.apiBase,
+        session: nextSessionPayload.session
+      }));
+
+      await loadDevices();
+      setStatus(
+        `Registered device ${deviceBundle.publicBundle.deviceId} and switched this phone to the new session. The previous device remains active on the account until revoked.`
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Unable to register a new device on this phone.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
 
   async function handleReplenish(device: DeviceRecord) {
     const actionKey = `${device.deviceId}:replenish`;
@@ -163,6 +218,13 @@ export default function DevicesScreen() {
       </View>
 
       <View style={styles.actions}>
+        <Pressable
+          onPress={() => handleRegisterNewDevice().catch(() => {})}
+          disabled={busyAction === "register-device" || loading}
+          style={styles.button}
+        >
+          <Text style={styles.buttonText}>{busyAction === "register-device" ? "Registering..." : "Register this phone as a new device"}</Text>
+        </Pressable>
         <Pressable onPress={() => loadDevices().catch(() => {})} disabled={loading || Boolean(busyAction)} style={styles.button}>
           <Text style={styles.buttonText}>{loading ? "Loading..." : "Refresh devices"}</Text>
         </Pressable>

@@ -1,167 +1,121 @@
 # deadp0et
 
-`deadp0et` is evolving from a passphrase demo into a real secure-messaging architecture. The repo now combines a
-browser-based protocol prototype with a modular Node.js backend for account creation, public key registration,
-encrypted message envelopes, and server-assisted delivery that keeps plaintext on client devices.
+`deadp0et` is a secure messaging app in active development. The repo currently includes a working backend, a React
+Native / Expo mobile client, a browser reference client, and shared client logic used across both.
 
-## What this version includes
+The product direction is straightforward:
 
-- Account creation and sign-in flows modeled in the browser
-- Local generation of per-device ECDH identity keys and signed prekeys
-- Recipient directory records that expose only public bundles
-- Encrypted message envelopes sent through a real HTTP backend mailbox
-- Local decryption of inbox messages addressed to the signed-in user
-- Protocol and server API documentation in [`docs/protocol.md`](./docs/protocol.md) and [`docs/api-contract.md`](./docs/api-contract.md)
+- account-based secure messaging with per-device key material
+- local encryption and decryption on client devices
+- server-side routing, mailbox storage, and device bundle distribution
+- multi-device account support with device trust and prekey management
 
-## Security shape
+## Current product surface
 
-The current design aims for this trust model:
+The mobile app now supports:
 
-- The server knows usernames, device ids, and message routing metadata
-- The server stores public keys and opaque ciphertext envelopes
-- The sender encrypts before upload
-- The recipient decrypts after download
-- Private device keys stay local to the client
+- account creation and login against the live backend
+- secure local storage of session and device state
+- real per-device key generation
+- encrypted compose and inbox decrypt flows
+- trust-on-first-use device verification with safety numbers
+- trust record review and explicit re-trust of changed device keys
+- device listing, low-prekey monitoring, local prekey replenishment, revocation of other devices
+- registration of this phone as an additional device
+- settings for backend URL, health checks, logout, and local state reset
 
-## Important caveat
+The browser app remains in the repo as a reference client and development surface for the same backend and protocol.
 
-This is still a prototype. It demonstrates the product and protocol direction, but it is not yet a hardened
-production messenger. To get there, we still need:
+## Repository layout
 
-- A real datastore behind the current file-backed repository layer
-- A stronger registration and login flow with hardened password handling
-- X3DH or an equivalent audited handshake
-- A Double Ratchet or equivalent per-message ratchet
-- Device recovery, backup, and account recovery flows
-- Security review and independent cryptographic audit
-
-## Files
-
-- `index.html` and `styles.css`: product UI for account, directory, compose, and inbox flows
-- `app.js`: browser-side protocol prototype and current browser client integration layer
-- `protocol-client.js`: browser-safe shared client helpers loaded ahead of `app.js`
-- `packages/protocol-client`: shared client package for browser and future mobile reuse
-- `mobile/`: Expo / React Native mobile scaffold
-- `docs/protocol.md`: protocol design draft
+- `mobile/`: Expo / React Native client
+- `packages/protocol-client/`: shared client helpers and API surface
+- `protocol-client.js`: browser-safe shared helper bundle
+- `backend/`: modular Node.js backend services
+- `server.js`: backend entrypoint
+- `app.js`, `index.html`, `styles.css`: browser reference client
 - `docs/api-contract.md`: backend API contract
+- `docs/protocol.md`: protocol and design notes
 
-## Backend status
+## Backend
 
-This repo now includes a working backend entrypoint in `server.js` plus modular backend code under `./backend/`.
-It implements the documented API contract with:
+The backend already implements the core app flows:
 
 - account creation and session issuance
-- login throttling and active-session caps
+- login throttling and active-session limits
 - public device bundle lookup
-- authenticated device registration and revocation
-- prekey rotation for active devices
-- one-time prekey reservation, release, and burn-on-ack flows
-- encrypted envelope delivery to recipient devices
-- delivered, expired, and read tracking for inbox messages
-- file-backed persistence in `./data/store.json`
+- authenticated device registration, revocation, and prekey rotation
+- one-time prekey reservation and release lifecycle
+- encrypted envelope delivery, inbox fetch, and acknowledgement
+- health reporting and prekey-related counters
 
-### Backend layout
+The service is split by domain under `backend/` so storage and delivery work can keep evolving without collapsing back
+into one large server file.
 
-- `server.js`: HTTP server entrypoint
-- `backend/app.js`: route dispatch and top-level request handling
-- `backend/http.js`: JSON/body/static helpers
-- `backend/auth.js`: account creation, login, sessions, throttling
-- `backend/prekeys.js`: bundle issuance and reservation lifecycle
-- `backend/messages.js`: envelope delivery, inbox fetch, acknowledgement
-- `backend/devices.js`: device registration, revocation, rotation, health metrics
-- `backend/store.js`: file-backed repositories for accounts, sessions, messages, and reservations
-- `backend/shared.js`: shared domain helpers and validators
+## Running locally
 
-### Current architecture notes
+Install dependencies:
 
-- Business logic is split by domain rather than kept in one server file.
-- Services operate on explicit repositories instead of mutating a raw store object directly.
-- Persistence is still JSON-file based, so the main next backend step is replacing the storage implementation without rewriting the service layer.
-- Shared client logic is being extracted out of `app.js` into `packages/protocol-client`.
-- The browser currently consumes a browser-safe helper layer from `protocol-client.js`, which mirrors the reusable package surface where practical.
+```bash
+npm install
+```
 
-## Client extraction status
-
-The repo now has the first shared client boundary in place for browser and mobile work.
-
-Currently extracted into `packages/protocol-client` and `protocol-client.js`:
-
-- backend API client helpers
-- username normalization and storage key helpers
-- local-device collection helpers
-- trust-record lookup/update helpers
-- trust-state evaluation helpers
-- local-device serialization and hydration helpers
-
-Still browser-specific in `app.js`:
-
-- DOM/UI updates
-- browser `localStorage` access
-- Web Crypto key generation and envelope crypto
-- clipboard and other browser-only behavior
-
-### Run it
+Run the backend:
 
 ```bash
 npm start
 ```
 
-The service listens on `http://0.0.0.0:3000` by default. Override with `PORT` or `HOST` if needed.
+The backend listens on `http://0.0.0.0:3000` by default and serves the browser client from the same origin.
 
-The backend also serves the browser client directly:
+Run the mobile app:
 
-- `GET /` serves `index.html`
-- `GET /app.js` serves the frontend script
-- `GET /protocol-client.js` serves the browser-safe shared client helpers
-- `GET /styles.css` serves the app stylesheet
+```bash
+npm --workspace mobile start
+```
 
-That means local testing can happen at a single origin, usually `http://127.0.0.1:3000/`.
+If you are working on the Expo client, use a current Node 20 release. The mobile workspace may install on older Node
+versions, but Expo tooling is more reliable on Node 20.x.
 
-The frontend defaults its API base to `window.location.origin`, so when served through
-`https://deadp0et.deadplug.digital` it will automatically talk to the correct proxied backend endpoint.
+## Testing
 
-### Test it
+Run the backend test suite:
 
 ```bash
 npm test
 ```
 
-The test suite uses Node's built-in `node:test` runner and exercises the backend over real HTTP requests with an
-isolated temporary data directory. It currently covers account flows, session expiry and throttling, device
-management, prekey reservation lifecycle, message delivery, acknowledgement, and health-related counters.
+Run the mobile typecheck:
 
-### Docker deployment
+```bash
+./node_modules/.bin/tsc -p mobile/tsconfig.json --noEmit
+```
 
-This repo now includes:
+## Deployment
+
+This repo includes:
 
 - `Dockerfile`
 - `docker-compose.yml`
 
-Start it with:
+Start the service with:
 
 ```bash
 docker compose up -d --build
 ```
 
-The container joins the existing external `proxy` network so Nginx Proxy Manager can route a hostname like
-`deadp0et.deadplug.digital` to the upstream container `deadp0et` on port `3000`.
+## Roadmap
 
-### Notes
+The highest-value next steps are:
 
-- This is still a prototype backend. The browser still submits a simplified `passwordVerifier`, but the server now stores a derived record instead of the raw verifier.
-- Sessions are opaque bearer tokens with a fixed expiration window.
-- The backend exposes a `GET /health` endpoint with message, session, and prekey-reservation counters.
-- It does not decrypt message contents.
-- It is intended to give the frontend a real server surface that matches `docs/api-contract.md`.
+- push notification registration and delivery signaling
+- richer mobile onboarding and device portability
+- production datastore replacement for the file-backed repository
+- stronger auth and recovery flows
+- ratcheting and further protocol hardening
+- media, conversation UX, and app polish
 
-### Discord GitHub updates
+## Documentation
 
-This repo includes a workflow at `.github/workflows/discord-updates.yml` that posts notifications to Discord for:
-
-- pushes
-- pull request opens/updates/merges/closes
-- published releases
-
-To enable it, add a repository secret:
-
-- `DISCORD_WEBHOOK_URL`: your Discord channel webhook URL
+- API contract: [docs/api-contract.md](./docs/api-contract.md)
+- Protocol notes: [docs/protocol.md](./docs/protocol.md)
