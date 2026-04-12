@@ -5,6 +5,7 @@ const DEVICE_KEY = "deadp0et.mobile.device";
 const CONTACT_TRUST_KEY = "deadp0et.mobile.contact-trust";
 const API_BASE_KEY = "deadp0et.mobile.api-base";
 const CONVERSATION_CACHE_KEY = "deadp0et.mobile.conversation-cache";
+const COMPOSE_DRAFTS_KEY = "deadp0et.mobile.compose-drafts";
 
 export async function saveSession(value: string) {
   await SecureStore.setItemAsync(SESSION_KEY, value);
@@ -64,4 +65,16 @@ export async function loadConversationCache() {
 
 export async function clearConversationCache() {
   await SecureStore.deleteItemAsync(CONVERSATION_CACHE_KEY);
+}
+
+export async function saveComposeDrafts(value: string) {
+  await SecureStore.setItemAsync(COMPOSE_DRAFTS_KEY, value);
+}
+
+export async function loadComposeDrafts() {
+  return SecureStore.getItemAsync(COMPOSE_DRAFTS_KEY);
+}
+
+export async function clearComposeDrafts() {
+  await SecureStore.deleteItemAsync(COMPOSE_DRAFTS_KEY);
 }

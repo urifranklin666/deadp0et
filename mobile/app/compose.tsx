@@ -1,8 +1,9 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { encryptForRecipient } from "../src/lib/crypto";
+import { loadComposeDrafts, saveComposeDrafts } from "../src/lib/secure-storage";
 import { loadStoredAuthState, createMobileApi } from "../src/lib/session";
 import { assessMobileDeviceTrust, trustCurrentMobileDevice } from "../src/lib/trust";
 import { normalizeUsername } from "@deadp0et/protocol-client";
@@ -25,10 +26,36 @@ type PendingTrust = {
   safetyNumber: string;
 };
 
+type ComposeDraft = {
+  recipient: string;
+  subject: string;
+  body: string;
+  updatedAt: string;
+};
+
+type ComposeDraftMap = Record<string, ComposeDraft>;
+
+function normalizeDrafts(raw: string | null): ComposeDraftMap {
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as ComposeDraftMap | null;
+    return parsed || {};
+  } catch {
+    return {};
+  }
+}
+
 export default function ComposeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ recipient?: string }>();
-  const [recipient, setRecipient] = useState(typeof params.recipient === "string" ? params.recipient : "");
+  const routeRecipient = useMemo(
+    () => (typeof params.recipient === "string" ? normalizeUsername(params.recipient) : ""),
+    [params.recipient]
+  );
+  const [recipient, setRecipient] = useState(routeRecipient);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
@@ -36,6 +63,65 @@ export default function ComposeScreen() {
   const [lastEnvelope, setLastEnvelope] = useState<string>("");
   const [trustNote, setTrustNote] = useState<string | null>(null);
   const [pendingTrust, setPendingTrust] = useState<PendingTrust | null>(null);
+  const [draftsLoaded, setDraftsLoaded] = useState(false);
+
+  useEffect(() => {
+    const normalizedRecipient = routeRecipient || normalizeUsername(recipient);
+
+    loadComposeDrafts()
+      .then((rawDrafts) => {
+        const drafts = normalizeDrafts(rawDrafts);
+        const activeDraft = normalizedRecipient ? drafts[normalizedRecipient] : null;
+
+        if (routeRecipient) {
+          setRecipient(routeRecipient);
+        }
+        if (activeDraft) {
+          setSubject(activeDraft.subject || "");
+          setBody(activeDraft.body || "");
+        } else if (routeRecipient) {
+          setSubject("");
+          setBody("");
+        }
+      })
+      .finally(() => {
+        setDraftsLoaded(true);
+      });
+  }, [routeRecipient]);
+
+  useEffect(() => {
+    if (!draftsLoaded) {
+      return;
+    }
+
+    const normalizedRecipient = normalizeUsername(recipient);
+    const trimmedSubject = subject;
+    const currentBody = body;
+
+    loadComposeDrafts()
+      .then((rawDrafts) => {
+        const drafts = normalizeDrafts(rawDrafts);
+        const nextDrafts = { ...drafts };
+
+        if (!normalizedRecipient) {
+          return saveComposeDrafts(JSON.stringify(nextDrafts));
+        }
+
+        if (!trimmedSubject.trim() && !currentBody.trim()) {
+          delete nextDrafts[normalizedRecipient];
+        } else {
+          nextDrafts[normalizedRecipient] = {
+            recipient: normalizedRecipient,
+            subject: trimmedSubject,
+            body: currentBody,
+            updatedAt: new Date().toISOString()
+          };
+        }
+
+        return saveComposeDrafts(JSON.stringify(nextDrafts));
+      })
+      .catch(() => {});
+  }, [recipient, subject, body, draftsLoaded]);
 
   async function handleSend() {
     const to = normalizeUsername(recipient);
@@ -112,6 +198,10 @@ export default function ComposeScreen() {
           ? `Encrypted envelope stored for ${prekeyBundle.username} on ${prekeyBundle.device.deviceId} using one-time prekey ${envelope.oneTimePrekeyId}.`
           : `Encrypted envelope stored for ${prekeyBundle.username} on ${prekeyBundle.device.deviceId}.`
       );
+      const rawDrafts = await loadComposeDrafts();
+      const drafts = normalizeDrafts(rawDrafts);
+      delete drafts[to];
+      await saveComposeDrafts(JSON.stringify(drafts));
       setPendingTrust(null);
       setSubject("");
       setBody("");
