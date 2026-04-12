@@ -69,6 +69,7 @@ const devicePortabilityOutput = document.querySelector("#device-portability-outp
 const localDeviceSelect = document.querySelector("#local-device-select");
 const exportDeviceButton = document.querySelector("#export-device-button");
 const importDeviceButton = document.querySelector("#import-device-button");
+const selectedMessageIdInput = document.querySelector("#selected-message-id");
 
 const api = createApiClient({
   getApiBase,
@@ -538,6 +539,16 @@ function renderInbox(messages = null) {
     state.inbox = messages;
   }
 
+  const currentSelectedMessageId = selectedMessageIdInput?.value || "";
+  const selectedExists = currentSelectedMessageId
+    ? state.inbox.some((message) => message.messageId === currentSelectedMessageId)
+    : false;
+  if (selectedMessageIdInput) {
+    selectedMessageIdInput.value = selectedExists
+      ? currentSelectedMessageId
+      : state.inbox[state.inbox.length - 1]?.messageId || "";
+  }
+
   inboxOutput.value = state.inbox.length
     ? JSON.stringify(state.inbox, null, 2)
     : "No encrypted envelopes for this device yet.";
@@ -553,6 +564,17 @@ function renderInbox(messages = null) {
   }
 
   return state.inbox;
+}
+
+function getSelectedInboxMessage() {
+  const selectedMessageId = selectedMessageIdInput?.value || "";
+  if (selectedMessageId) {
+    const selected = state.inbox.find((message) => message.messageId === selectedMessageId);
+    if (selected) {
+      return selected;
+    }
+  }
+  return state.inbox[state.inbox.length - 1] || null;
 }
 
 async function fetchHealth() {
@@ -910,8 +932,8 @@ async function decryptLatest() {
     return;
   }
 
-  const latest = state.inbox[state.inbox.length - 1];
-  if (!latest) {
+  const selectedMessage = getSelectedInboxMessage();
+  if (!selectedMessage) {
     setStatus("No messages are waiting for this device.", "error");
     return;
   }
@@ -919,30 +941,30 @@ async function decryptLatest() {
   try {
     const sharedSecrets = [await deriveSharedSecret(
       state.currentUser.privateKeys.signedPrekeyPrivateKey,
-      latest.envelope.ephemeralKey
+      selectedMessage.envelope.ephemeralKey
     )];
-    const oneTimePrekeyId = typeof latest.envelope.oneTimePrekeyId === "string" ? latest.envelope.oneTimePrekeyId.trim() : "";
+    const oneTimePrekeyId = typeof selectedMessage.envelope.oneTimePrekeyId === "string" ? selectedMessage.envelope.oneTimePrekeyId.trim() : "";
     if (oneTimePrekeyId) {
       const oneTimePrekeyPrivateKey = state.currentUser.privateKeys.oneTimePrekeyPrivateKeys?.[oneTimePrekeyId];
       if (!oneTimePrekeyPrivateKey) {
         throw new Error("Missing local one-time prekey private key required for this envelope.");
       }
-      sharedSecrets.push(await deriveSharedSecret(oneTimePrekeyPrivateKey, latest.envelope.ephemeralKey));
+      sharedSecrets.push(await deriveSharedSecret(oneTimePrekeyPrivateKey, selectedMessage.envelope.ephemeralKey));
     }
 
     const aesKey = await deriveAesKey(sharedSecrets);
     const plaintext = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: base64ToBytes(latest.envelope.iv) },
+      { name: "AES-GCM", iv: base64ToBytes(selectedMessage.envelope.iv) },
       aesKey,
-      base64ToBytes(latest.envelope.ciphertext)
+      base64ToBytes(selectedMessage.envelope.ciphertext)
     );
     const decoded = JSON.parse(new TextDecoder().decode(plaintext));
     const ackPayload = {
-      messageIds: [latest.messageId]
+      messageIds: [selectedMessage.messageId]
     };
     if (oneTimePrekeyId) {
       ackPayload.oneTimePrekeyProofs = [{
-        messageId: latest.messageId,
+        messageId: selectedMessage.messageId,
         oneTimePrekeyId
       }];
     }
@@ -962,13 +984,13 @@ async function decryptLatest() {
     );
     setStatus(
       oneTimePrekeyId
-        ? `Latest message from ${latest.from} decrypted locally on device ${state.currentUser.session.deviceId} using one-time prekey ${oneTimePrekeyId}.`
-        : `Latest message from ${latest.from} decrypted locally on device ${state.currentUser.session.deviceId}.`
+        ? `Selected message from ${selectedMessage.from} decrypted locally on device ${state.currentUser.session.deviceId} using one-time prekey ${oneTimePrekeyId}.`
+        : `Selected message from ${selectedMessage.from} decrypted locally on device ${state.currentUser.session.deviceId}.`
     );
   } catch (error) {
     plaintextOutput.value = "";
-    setSummary(plaintextSummary, "Unable to decrypt the latest message with the current local device key.", true);
-    setStatus("Unable to decrypt the latest envelope with the locally stored device key.", "error");
+    setSummary(plaintextSummary, "Unable to decrypt the selected message with the current local device key.", true);
+    setStatus("Unable to decrypt the selected envelope with the locally stored device key.", "error");
     throw error;
   }
 }

@@ -32,7 +32,10 @@
             <path d="M13 18.8v1.5" stroke="#cc0000" stroke-width="1" stroke-linecap="round"/>
           </svg>
         </div>
-        <span class="app-title">dead<span class="app-title-p0">p0</span>et</span>
+        <div class="app-brand">
+          <span class="app-title">dead<span class="app-title-p0">p0</span>et</span>
+          <span class="app-brand-line">private delivery for every device you trust</span>
+        </div>
         <span class="app-subtitle">e2e encrypted</span>
       </div>
     </header>
@@ -43,20 +46,69 @@
       <!-- ====== MESSAGES TAB ====== -->
       <section class="tab-panel active" id="tab-messages" role="tabpanel">
 
+        <div class="hero-panel">
+          <div class="hero-copy">
+            <div class="hero-kicker">Secure Messaging</div>
+            <h1 class="hero-title">A dark-room messenger built around device trust.</h1>
+            <p class="hero-text">
+              Keep identity keys local, route ciphertext through the backend, and manage delivery one
+              device at a time.
+            </p>
+          </div>
+          <div class="hero-chip-row" aria-label="Core properties">
+            <span class="hero-chip">local private keys</span>
+            <span class="hero-chip">device-bound inbox</span>
+            <span class="hero-chip">ciphertext only</span>
+          </div>
+          <div class="hero-actions">
+            <button class="btn-primary btn-sm tab-jump-button" data-target-tab="account">Open Account</button>
+            <button class="btn-secondary btn-sm tab-jump-button" data-target-tab="devices">Manage Devices</button>
+          </div>
+        </div>
+
+        <div class="quick-glance-grid" aria-label="Workflow highlights">
+          <div class="glance-card">
+            <span class="glance-label">Flow</span>
+            <strong>Sign in, pull a bundle, send locally encrypted messages.</strong>
+          </div>
+          <div class="glance-card">
+            <span class="glance-label">Trust</span>
+            <strong>Fingerprint changes are visible before you keep talking.</strong>
+          </div>
+        </div>
+
         <!-- Inbox -->
         <div class="section-label">Inbox</div>
+        <div class="surface-card">
+          <div id="inbox-summary" class="summary-pill empty">No inbox data loaded.</div>
 
-        <div id="inbox-summary" class="summary-pill empty">No inbox data loaded.</div>
-
-        <div class="inbox-list" id="inbox-list-rendered">
-          <div class="inbox-empty-state">
-            <div class="inbox-empty-icon" aria-hidden="true">
-              <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-                <rect x="4" y="10" width="32" height="22" rx="3" stroke="#4a1a1a" stroke-width="1.5"/>
-                <path d="M4 14l16 11 16-11" stroke="#4a1a1a" stroke-width="1.5"/>
-              </svg>
+          <div class="thread-browser" id="thread-browser">
+            <div class="thread-column">
+              <div class="thread-column-header">
+                <span>Conversations</span>
+                <span class="thread-column-meta" id="thread-count-label">0 threads</span>
+              </div>
+              <div class="inbox-list" id="inbox-list-rendered">
+                <div class="inbox-empty-state">
+                  <div class="inbox-empty-icon" aria-hidden="true">
+                    <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+                      <rect x="4" y="10" width="32" height="22" rx="3" stroke="#4a1a1a" stroke-width="1.5"/>
+                      <path d="M4 14l16 11 16-11" stroke="#4a1a1a" stroke-width="1.5"/>
+                    </svg>
+                  </div>
+                  <p>No messages yet.<br>Refresh inbox or send one.</p>
+                </div>
+              </div>
             </div>
-            <p>No messages yet.<br>Refresh inbox or send one.</p>
+            <div class="thread-column thread-column-messages">
+              <div class="thread-column-header">
+                <span id="thread-view-title">Thread</span>
+                <span class="thread-column-meta" id="thread-message-count-label">No selection</span>
+              </div>
+              <div class="thread-view" id="thread-view-rendered">
+                <div class="thread-empty-state">Select a conversation to inspect its encrypted envelopes.</div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -75,7 +127,8 @@
 
         <!-- Compose card -->
         <div class="section-label" style="margin-top:20px">Compose</div>
-        <div class="compose-card">
+        <div class="compose-card feature-card">
+          <div class="card-eyebrow">Outgoing envelope</div>
           <div class="field-group">
             <label for="recipient-username" class="field-label">To</label>
             <input id="recipient-username" type="text" class="field-input" placeholder="recipient username">
@@ -110,7 +163,8 @@
 
         <!-- Bundle lookup (hidden utility — needed by JS) -->
         <div class="section-label" style="margin-top:20px">Bundle Lookup</div>
-        <div class="compose-card">
+        <div class="compose-card utility-card">
+          <p class="card-note">Pull the latest public device bundle before encrypting to a recipient.</p>
           <div class="field-row">
             <input id="lookup-username" type="text" class="field-input" placeholder="username to look up">
             <button id="lookup-button" class="btn-secondary btn-sm">Fetch</button>
@@ -132,7 +186,7 @@
               <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
               <path d="M5.5 7V5a2.5 2.5 0 015 0v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
             </svg>
-            Decrypt Latest
+            Decrypt Selected
           </button>
         </div>
 
@@ -141,6 +195,7 @@
         <textarea id="envelope-output" style="display:none" readonly></textarea>
         <textarea id="plaintext-output" style="display:none" readonly></textarea>
         <textarea id="directory-output" style="display:none" readonly></textarea>
+        <input id="selected-message-id" type="hidden" value="">
 
       </section>
 
@@ -163,6 +218,7 @@
 
         <!-- Auth form -->
         <div class="auth-card">
+          <div class="card-eyebrow">Identity</div>
           <div class="section-label">Sign In / Create Account</div>
           <div class="field-group">
             <label for="signup-username" class="field-label">Username</label>
@@ -212,27 +268,31 @@
       <section class="tab-panel" id="tab-devices" role="tabpanel">
 
         <div class="section-label">Devices</div>
-        <div id="devices-summary" class="summary-pill empty">No device data loaded.</div>
+        <div class="surface-card">
+          <div class="card-eyebrow">Key inventory</div>
+          <div id="devices-summary" class="summary-pill empty">No device data loaded.</div>
 
-        <div class="device-actions-row">
-          <button id="refresh-devices-button" class="btn-secondary btn-sm">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M13.5 8A5.5 5.5 0 102.5 11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-              <path d="M1 14l1.5-2.5L5 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            Refresh
-          </button>
-          <button id="add-device-button" class="btn-primary btn-sm">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
-              <path d="M8 6v4M6 8h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-            </svg>
-            Add This Browser
-          </button>
+          <div class="device-actions-row">
+            <button id="refresh-devices-button" class="btn-secondary btn-sm">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M13.5 8A5.5 5.5 0 102.5 11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                <path d="M1 14l1.5-2.5L5 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Refresh
+            </button>
+            <button id="add-device-button" class="btn-primary btn-sm">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M8 6v4M6 8h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+              Add This Browser
+            </button>
+          </div>
         </div>
 
         <!-- Device action controls -->
         <div class="compose-card" style="margin-top:16px">
+          <div class="card-eyebrow">Maintenance</div>
           <div class="section-label" style="margin-bottom:12px">Device Action</div>
           <div class="field-group">
             <label for="device-action-id" class="field-label">Device ID</label>
@@ -253,6 +313,7 @@
         <!-- Portability -->
         <div class="section-label" style="margin-top:20px">Device Portability</div>
         <div class="compose-card">
+          <p class="card-note">Export a local device record or import one to move the browser client between machines.</p>
           <div id="device-portability-summary" class="summary-pill empty" style="margin-bottom:12px">No local device note yet.</div>
           <div class="field-row" style="gap:8px">
             <button id="export-device-button" class="btn-secondary btn-sm" style="flex:1">
@@ -286,6 +347,7 @@
 
         <div class="section-label">Backend Endpoint</div>
         <div class="compose-card">
+          <div class="card-eyebrow">Runtime</div>
           <div class="field-group">
             <label for="api-base" class="field-label">API Base URL</label>
             <input id="api-base" type="text" class="field-input" placeholder="https://deadp0et.deadplug.digital">
@@ -312,7 +374,7 @@
         <div id="health-summary" class="health-card empty">No health check has been run yet.</div>
 
         <!-- About section -->
-        <div class="section-label" style="margin-top:20px">Protocol Notes</div>
+        <div class="section-label" style="margin-top:20px">Runtime Notes</div>
         <div class="notes-grid">
           <div class="note-card">
             <div class="note-icon" aria-hidden="true">
@@ -431,6 +493,16 @@
       });
     });
 
+    document.querySelectorAll('.tab-jump-button').forEach(button => {
+      button.addEventListener('click', () => {
+        const target = button.dataset.targetTab;
+        const tab = document.querySelector(`.nav-tab[data-tab="${target}"]`);
+        if (tab) {
+          tab.click();
+        }
+      });
+    });
+
     // Status toast: watch for changes to #status text and show/hide the bar
     const statusEl = document.getElementById('status');
     const statusBar = document.getElementById('status-bar');
@@ -480,6 +552,78 @@
     const inboxSummary = document.getElementById('inbox-summary');
     const inboxOutput = document.getElementById('inbox-output');
     const inboxList = document.getElementById('inbox-list-rendered');
+    const threadView = document.getElementById('thread-view-rendered');
+    const threadCountLabel = document.getElementById('thread-count-label');
+    const threadMessageCountLabel = document.getElementById('thread-message-count-label');
+    const threadViewTitle = document.getElementById('thread-view-title');
+    const selectedMessageIdInput = document.getElementById('selected-message-id');
+    let selectedThreadKey = '';
+    let selectedMessageId = '';
+
+    function formatThreadTimestamp(value) {
+      if (!value) {
+        return '';
+      }
+      const date = new Date(value);
+      const now = new Date();
+      const isToday = date.toDateString() === now.toDateString();
+      return isToday
+        ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function buildThreadState(messages) {
+      const threads = new Map();
+      messages.forEach((message, index) => {
+        const threadKey = String(message.from || 'unknown');
+        const existing = threads.get(threadKey) || {
+          key: threadKey,
+          sender: threadKey,
+          messages: []
+        };
+        existing.messages.push({ ...message, _index: index });
+        threads.set(threadKey, existing);
+      });
+
+      return Array.from(threads.values())
+        .map((thread) => {
+          thread.messages.sort((left, right) => {
+            const leftTime = new Date(left.storedAt || 0).getTime();
+            const rightTime = new Date(right.storedAt || 0).getTime();
+            return leftTime - rightTime;
+          });
+          thread.latest = thread.messages[thread.messages.length - 1];
+          return thread;
+        })
+        .sort((left, right) => {
+          const leftTime = new Date(left.latest?.storedAt || 0).getTime();
+          const rightTime = new Date(right.latest?.storedAt || 0).getTime();
+          return rightTime - leftTime;
+        });
+    }
+
+    function setSelectedMessage(messageId) {
+      selectedMessageId = messageId || '';
+      selectedMessageIdInput.value = selectedMessageId;
+    }
+
+    function renderEmptyThreads(message = 'Select a conversation to inspect its encrypted envelopes.') {
+      threadView.innerHTML = `<div class="thread-empty-state">${message}</div>`;
+      threadCountLabel.textContent = '0 threads';
+      threadMessageCountLabel.textContent = 'No selection';
+      threadViewTitle.textContent = 'Thread';
+      selectedThreadKey = '';
+      setSelectedMessage('');
+    }
 
     function renderInboxUI() {
       const raw = inboxOutput.value;
@@ -493,37 +637,95 @@
           </div>
           <p>No messages yet.<br>Refresh inbox or send one.</p>
         </div>`;
+        renderEmptyThreads();
         return;
       }
+
       let messages;
-      try { messages = JSON.parse(raw); } catch(e) { return; }
+      try {
+        messages = JSON.parse(raw);
+      } catch (e) {
+        return;
+      }
+
       if (!Array.isArray(messages) || messages.length === 0) {
         inboxList.innerHTML = `<div class="inbox-empty-state"><p>Inbox is empty.</p></div>`;
+        renderEmptyThreads();
         return;
       }
-      inboxList.innerHTML = messages.map((msg, i) => {
-        const sender = msg.from || 'unknown';
+
+      const threads = buildThreadState(messages);
+      const selectedThread = threads.find((thread) => thread.key === selectedThreadKey) || threads[0];
+      selectedThreadKey = selectedThread.key;
+      const selectedThreadMessages = selectedThread.messages;
+      const selectedMessage =
+        selectedThreadMessages.find((message) => message.messageId === selectedMessageId) ||
+        selectedThreadMessages[selectedThreadMessages.length - 1];
+      setSelectedMessage(selectedMessage?.messageId || '');
+
+      threadCountLabel.textContent = `${threads.length} thread${threads.length === 1 ? '' : 's'}`;
+      threadViewTitle.textContent = selectedThread.sender;
+      threadMessageCountLabel.textContent = `${selectedThreadMessages.length} encrypted item${selectedThreadMessages.length === 1 ? '' : 's'}`;
+
+      inboxList.innerHTML = threads.map((thread) => {
+        const sender = thread.sender || 'unknown';
         const initials = sender.slice(0, 2).toUpperCase();
         const colors = ['#cc0000','#880000','#4d0000','#aa2200','#991100'];
         const color = colors[sender.charCodeAt(0) % colors.length];
-        const msgId = msg.messageId || msg.id || i;
-        const ts = msg.storedAt ? new Date(msg.storedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
-        const preview = msg.envelope ? '[encrypted envelope]' : JSON.stringify(msg).slice(0, 48) + '...';
-        return `<div class="inbox-row" data-index="${i}">
+        const ts = formatThreadTimestamp(thread.latest?.storedAt);
+        const preview = thread.latest?.envelope ? '[encrypted envelope]' : JSON.stringify(thread.latest || {}).slice(0, 48) + '...';
+        return `<button class="inbox-row ${thread.key === selectedThreadKey ? 'active' : ''}" data-thread-key="${escapeHtml(thread.key)}" type="button">
           <div class="inbox-avatar" style="background:${color}" aria-hidden="true">${initials}</div>
           <div class="inbox-row-body">
             <div class="inbox-row-top">
-              <span class="inbox-sender">${sender}</span>
-              <span class="inbox-time">${ts}</span>
+              <span class="inbox-sender">${escapeHtml(sender)}</span>
+              <span class="inbox-time">${escapeHtml(ts)}</span>
             </div>
-            <div class="inbox-preview">${preview}</div>
+            <div class="inbox-preview">${escapeHtml(preview)}</div>
+            <div class="thread-preview-meta">${thread.messages.length} message${thread.messages.length === 1 ? '' : 's'}</div>
           </div>
-        </div>`;
+        </button>`;
+      }).join('');
+
+      threadView.innerHTML = selectedThreadMessages.map((message) => {
+        const isSelected = message.messageId === selectedMessageId;
+        const reservationHint = message.envelope?.oneTimePrekeyId
+          ? `<span class="thread-message-flag">otp ${escapeHtml(message.envelope.oneTimePrekeyId)}</span>`
+          : '';
+        return `<button class="thread-message-card ${isSelected ? 'active' : ''}" type="button" data-message-id="${escapeHtml(message.messageId || '')}">
+          <div class="thread-message-top">
+            <span class="thread-message-from">${escapeHtml(message.from || 'unknown')}</span>
+            <span class="thread-message-time">${escapeHtml(formatThreadTimestamp(message.storedAt))}</span>
+          </div>
+          <div class="thread-message-body">Encrypted envelope waiting on device selection and local keys.</div>
+          <div class="thread-message-meta">
+            <span class="thread-message-id">${escapeHtml(message.messageId || 'pending')}</span>
+            ${reservationHint}
+          </div>
+        </button>`;
       }).join('');
     }
 
     const inboxObserver = new MutationObserver(renderInboxUI);
     inboxObserver.observe(inboxOutput, { childList: true, characterData: true, subtree: true });
+    inboxList.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-thread-key]');
+      if (!target) {
+        return;
+      }
+      selectedThreadKey = target.getAttribute('data-thread-key') || '';
+      selectedMessageId = '';
+      renderInboxUI();
+    });
+    threadView.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-message-id]');
+      if (!target) {
+        return;
+      }
+      setSelectedMessage(target.getAttribute('data-message-id') || '');
+      renderInboxUI();
+    });
+    renderInboxUI();
   </script>
 
 </body>
