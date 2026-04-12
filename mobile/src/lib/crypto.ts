@@ -330,6 +330,10 @@ export async function decryptEnvelope({
   };
 }
 
-export async function appendOneTimePrekeysToStoredRecord(record: unknown, privateKeys: Record<string, CryptoKey>, publicKeys = []) {
+export async function appendOneTimePrekeysToStoredRecord(
+  record: unknown,
+  privateKeys: Record<string, CryptoKey>,
+  publicKeys: Array<{ keyId: string; key: JsonWebKey }> = []
+) {
   return appendLocalOneTimePrekeysRecord(record, privateKeys, publicKeys, exportPrivateKey);
 }
