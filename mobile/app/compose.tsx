@@ -1,0 +1,304 @@
+import { useRouter } from "expo-router";
+import { useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+
+import { encryptForRecipient } from "../src/lib/crypto";
+import { loadStoredAuthState, createMobileApi } from "../src/lib/session";
+import { assessMobileDeviceTrust, trustCurrentMobileDevice } from "../src/lib/trust";
+import { normalizeUsername } from "@deadp0et/protocol-client";
+
+type PrekeyBundle = {
+  username: string;
+  device: {
+    deviceId: string;
+    identityKey: JsonWebKey;
+    signedPrekey: JsonWebKey;
+    prekeySignature: string;
+  };
+  oneTimePrekey?: { keyId: string; key: JsonWebKey } | null;
+  prekeyReservationToken: string;
+};
+
+type PendingTrust = {
+  username: string;
+  device: PrekeyBundle["device"];
+  safetyNumber: string;
+};
+
+export default function ComposeScreen() {
+  const router = useRouter();
+  const [recipient, setRecipient] = useState("");
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [lastEnvelope, setLastEnvelope] = useState<string>("");
+  const [trustNote, setTrustNote] = useState<string | null>(null);
+  const [pendingTrust, setPendingTrust] = useState<PendingTrust | null>(null);
+
+  async function handleSend() {
+    const to = normalizeUsername(recipient);
+    const trimmedSubject = subject.trim();
+    const trimmedBody = body.trim();
+
+    if (!to || !trimmedSubject || !trimmedBody) {
+      setStatus("Recipient, subject, and message body are required.");
+      return;
+    }
+
+    setBusy(true);
+    setStatus(`Reserving recipient prekey bundle for ${to}...`);
+    setPendingTrust(null);
+    setTrustNote(null);
+
+    try {
+      const auth = await loadStoredAuthState();
+      if (!auth.hydratedDevice) {
+        throw new Error("Saved local device keys could not be restored.");
+      }
+      if (to === normalizeUsername(auth.hydratedDevice.username)) {
+        throw new Error("Send to a different account so the recipient bundle path is exercised.");
+      }
+
+      const api = createMobileApi(auth.apiBase, auth.session.accessToken);
+      const prekeyBundle = await api.issuePrekeyBundle(to, {}) as PrekeyBundle;
+
+      if (!prekeyBundle?.device?.deviceId) {
+        throw new Error("Recipient has no active prekey bundle.");
+      }
+
+      const trust = await assessMobileDeviceTrust(prekeyBundle.username, prekeyBundle.device);
+      setTrustNote(`Safety number: ${trust.safetyNumber}. ${trust.note}`);
+      if (!trust.trusted) {
+        setPendingTrust({
+          username: prekeyBundle.username,
+          device: prekeyBundle.device,
+          safetyNumber: trust.safetyNumber
+        });
+        throw new Error(
+          `Recipient device keys changed for ${prekeyBundle.device.deviceId}. Review the safety number and trust the current device keys before sending.`
+        );
+      }
+
+      const envelope = await encryptForRecipient({
+        senderUsername: auth.hydratedDevice.username,
+        senderDeviceId: auth.hydratedDevice.publicBundle.deviceId,
+        recipientBundle: prekeyBundle,
+        subject: trimmedSubject,
+        body: trimmedBody
+      });
+
+      const stored = await api.storeMessage({
+        to: prekeyBundle.username,
+        recipientDeviceId: prekeyBundle.device.deviceId,
+        envelope: {
+          protocol: envelope.protocol,
+          ephemeralKey: envelope.ephemeralKey,
+          iv: envelope.iv,
+          ciphertext: envelope.ciphertext,
+          oneTimePrekeyId: envelope.oneTimePrekeyId,
+          prekeyReservationToken: envelope.prekeyReservationToken
+        }
+      });
+
+      setLastEnvelope(JSON.stringify({
+        ...envelope,
+        messageId: stored.messageId,
+        storedAt: stored.storedAt
+      }, null, 2));
+      setStatus(
+        envelope.oneTimePrekeyId
+          ? `Encrypted envelope stored for ${prekeyBundle.username} on ${prekeyBundle.device.deviceId} using one-time prekey ${envelope.oneTimePrekeyId}.`
+          : `Encrypted envelope stored for ${prekeyBundle.username} on ${prekeyBundle.device.deviceId}.`
+      );
+      setPendingTrust(null);
+      setSubject("");
+      setBody("");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Unable to send the encrypted envelope.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleTrustCurrentDevice() {
+    if (!pendingTrust) {
+      return;
+    }
+
+    setBusy(true);
+    setStatus(`Trusting current device keys for ${pendingTrust.username}...`);
+
+    try {
+      const trusted = await trustCurrentMobileDevice(pendingTrust.username, pendingTrust.device);
+      setTrustNote(`Safety number: ${trusted.safetyNumber}. Current device keys are now trusted.`);
+      setPendingTrust(null);
+      setStatus(`Trusted current keys for ${pendingTrust.username} on device ${pendingTrust.device.deviceId}. Send again to continue.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Unable to trust the current device keys.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <ScrollView contentContainerStyle={styles.container}>
+      <Text style={styles.eyebrow}>deadp0et mobile</Text>
+      <Text style={styles.title}>Compose</Text>
+      <Text style={styles.description}>
+        This screen reserves a recipient prekey bundle, encrypts the payload locally on the phone, and stores the
+        ciphertext envelope through the existing backend message API.
+      </Text>
+
+      <View style={styles.card}>
+        <Text style={styles.label}>Recipient username</Text>
+        <TextInput value={recipient} onChangeText={setRecipient} autoCapitalize="none" style={styles.input} />
+        <Text style={styles.label}>Subject</Text>
+        <TextInput value={subject} onChangeText={setSubject} style={styles.input} />
+        <Text style={styles.label}>Message body</Text>
+        <TextInput
+          value={body}
+          onChangeText={setBody}
+          multiline
+          textAlignVertical="top"
+          style={[styles.input, styles.bodyInput]}
+        />
+      </View>
+
+      <View style={styles.actions}>
+        <Pressable onPress={() => handleSend().catch(() => {})} disabled={busy} style={styles.button}>
+          <Text style={styles.buttonText}>{busy ? "Encrypting..." : "Encrypt and send"}</Text>
+        </Pressable>
+        <Pressable onPress={() => router.replace("/inbox")} style={styles.secondaryButton}>
+          <Text style={styles.secondaryButtonText}>Back to inbox</Text>
+        </Pressable>
+      </View>
+
+      {status ? <Text style={styles.status}>{status}</Text> : null}
+      {trustNote ? <Text style={styles.status}>{trustNote}</Text> : null}
+
+      {pendingTrust ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Trust check required</Text>
+          <Text style={styles.detail}>Recipient: {pendingTrust.username}</Text>
+          <Text style={styles.detail}>Device: {pendingTrust.device.deviceId}</Text>
+          <Text style={styles.detail}>Safety number: {pendingTrust.safetyNumber}</Text>
+          <Pressable onPress={() => handleTrustCurrentDevice().catch(() => {})} disabled={busy} style={styles.secondaryButton}>
+            <Text style={styles.secondaryButtonText}>Trust current device keys</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {lastEnvelope ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Last envelope</Text>
+          <Text style={styles.output}>{lastEnvelope}</Text>
+        </View>
+      ) : null}
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flexGrow: 1,
+    padding: 24,
+    gap: 18,
+    backgroundColor: "#f5f0e8"
+  },
+  eyebrow: {
+    marginTop: 24,
+    color: "#8c3f2b",
+    fontSize: 14,
+    fontWeight: "700",
+    letterSpacing: 1.2,
+    textTransform: "uppercase"
+  },
+  title: {
+    color: "#1d1b19",
+    fontSize: 30,
+    fontWeight: "800",
+    lineHeight: 36
+  },
+  description: {
+    color: "#453f39",
+    fontSize: 16,
+    lineHeight: 24
+  },
+  card: {
+    padding: 18,
+    borderRadius: 18,
+    backgroundColor: "#fffaf3",
+    borderWidth: 1,
+    borderColor: "#dbc8b8",
+    gap: 8
+  },
+  label: {
+    color: "#1d1b19",
+    fontSize: 15,
+    fontWeight: "700"
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#dbc8b8",
+    borderRadius: 12,
+    backgroundColor: "#fff",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: "#1d1b19",
+    fontSize: 16
+  },
+  bodyInput: {
+    minHeight: 140
+  },
+  actions: {
+    gap: 12
+  },
+  button: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    backgroundColor: "#1d1b19",
+    alignItems: "center"
+  },
+  buttonText: {
+    color: "#f8f3ec",
+    fontSize: 16,
+    fontWeight: "700"
+  },
+  secondaryButton: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#c89c86",
+    backgroundColor: "#fff7f1",
+    alignItems: "center"
+  },
+  secondaryButtonText: {
+    color: "#8c3f2b",
+    fontSize: 16,
+    fontWeight: "700"
+  },
+  status: {
+    color: "#8c3f2b",
+    fontSize: 14,
+    lineHeight: 20
+  },
+  detail: {
+    color: "#453f39",
+    fontSize: 14,
+    lineHeight: 20
+  },
+  sectionTitle: {
+    color: "#1d1b19",
+    fontSize: 18,
+    fontWeight: "700"
+  },
+  output: {
+    color: "#453f39",
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: "monospace"
+  }
+});

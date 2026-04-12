@@ -3,5 +3,11 @@
   "compilerOptions": {
     "strict": true,
     "baseUrl": "."
-  }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ]
 }

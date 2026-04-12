@@ -18,6 +18,13 @@ async function requestJson(apiBase, pathname, options = {}) {
   return body;
 }
 
+/**
+ * @param {{
+ *   apiBase?: string,
+ *   getApiBase?: (() => string) | null,
+ *   getAccessToken?: (() => string | null) | null
+ * }} [options]
+ */
 function createApiClient({ apiBase, getApiBase = null, getAccessToken = null } = {}) {
   function resolveApiBase() {
     const base = typeof getApiBase === "function" ? getApiBase() : apiBase;

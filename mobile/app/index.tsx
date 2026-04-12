@@ -9,8 +9,8 @@ export default function HomeScreen() {
       <Text style={styles.eyebrow}>deadp0et mobile</Text>
       <Text style={styles.title}>Secure messaging client scaffold</Text>
       <Text style={styles.copy}>
-        This is the first mobile shell. It exists to validate app structure, shared client extraction, and secure local
-        storage boundaries before the messaging UX is implemented.
+        The mobile client now generates a real local device record, persists it in secure storage, sends encrypted
+        envelopes through the live backend, and decrypts inbox messages locally on the phone.
       </Text>
 
       <View style={styles.card}>
@@ -24,7 +24,8 @@ export default function HomeScreen() {
       <View style={styles.links}>
         <NavLink href="/signup" label="Create account" />
         <NavLink href="/login" label="Log in" />
-        <NavLink href="/inbox" label="Inbox shell" />
+        <NavLink href="/inbox" label="Inbox" />
+        <NavLink href="/compose" label="Compose" />
         <NavLink href="/devices" label="Devices shell" />
         <NavLink href="/settings" label="Settings shell" />
       </View>
@@ -32,7 +33,13 @@ export default function HomeScreen() {
   );
 }
 
-function NavLink({ href, label }: { href: "/signup" | "/login" | "/inbox" | "/devices" | "/settings"; label: string }) {
+function NavLink({
+  href,
+  label
+}: {
+  href: "/signup" | "/login" | "/inbox" | "/compose" | "/devices" | "/settings";
+  label: string;
+}) {
   return (
     <Link href={href} asChild>
       <Pressable style={styles.button}>
