@@ -5,9 +5,11 @@ import { consumeLocalOneTimePrekeyRecord } from "@deadp0et/protocol-client";
 
 import { decryptEnvelope } from "../src/lib/crypto";
 import {
+  clearComposeDrafts,
   clearConversationCache,
   clearLocalDevice,
   clearSession,
+  loadComposeDrafts,
   loadConversationCache,
   loadLocalDevice,
   saveConversationCache,
@@ -56,6 +58,9 @@ type Conversation = {
   correspondent: string;
   latestStoredAt: string;
   unreadCount: number;
+  preview: string;
+  hasDraft: boolean;
+  draftUpdatedAt: string | null;
   messages: CachedConversationMessage[];
 };
 
@@ -63,6 +68,15 @@ type ConversationCacheState = {
   selectedConversation?: string | null;
   messages: Record<string, CachedConversationMessage>;
 };
+
+type ComposeDraft = {
+  recipient: string;
+  subject: string;
+  body: string;
+  updatedAt: string;
+};
+
+type ComposeDraftMap = Record<string, ComposeDraft>;
 
 function normalizeConversationCache(raw: string | null): ConversationCacheState {
   if (!raw) {
@@ -86,6 +100,31 @@ function normalizeConversationCache(raw: string | null): ConversationCacheState 
   }
 }
 
+function normalizeComposeDrafts(raw: string | null): ComposeDraftMap {
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as ComposeDraftMap | null;
+    return parsed || {};
+  } catch {
+    return {};
+  }
+}
+
+function formatThreadTimestamp(isoDate: string) {
+  if (!isoDate) {
+    return "";
+  }
+  const date = new Date(isoDate);
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  return sameDay
+    ? date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : date.toLocaleDateString();
+}
+
 export default function InboxScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -97,6 +136,7 @@ export default function InboxScreen() {
   const [apiBase, setApiBase] = useState("");
   const [username, setUsername] = useState("");
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
+  const [composeDrafts, setComposeDrafts] = useState<ComposeDraftMap>({});
 
   const persistConversationCache = useCallback(async (
     nextMessages: Record<string, CachedConversationMessage>,
@@ -114,11 +154,13 @@ export default function InboxScreen() {
 
     try {
       const cacheState = normalizeConversationCache(await loadConversationCache());
+      const draftState = normalizeComposeDrafts(await loadComposeDrafts());
       const auth = await loadStoredAuthState();
       setApiBase(auth.apiBase);
       setSessionInfo(auth.session);
       setUsername(auth.localDeviceRecord.username || "");
       setSelectedConversation((current) => current || cacheState.selectedConversation || null);
+      setComposeDrafts(draftState);
 
       const api = createMobileApi(auth.apiBase, auth.session.accessToken);
       const payload = await api.getInbox();
@@ -154,6 +196,7 @@ export default function InboxScreen() {
       setSessionInfo(null);
       setUsername("");
       setSelectedConversation(null);
+      setComposeDrafts({});
       setStatus(error instanceof Error ? error.message : "Unable to restore the mobile inbox.");
     } finally {
       setLoading(false);
@@ -176,11 +219,13 @@ export default function InboxScreen() {
     await clearSession();
     await clearLocalDevice();
     await clearConversationCache();
+    await clearComposeDrafts();
     setMessages([]);
     setCachedMessages({});
     setSessionInfo(null);
     setUsername("");
     setSelectedConversation(null);
+    setComposeDrafts({});
     router.replace("/login");
   }
 
@@ -275,11 +320,22 @@ export default function InboxScreen() {
           correspondent,
           latestStoredAt: sortedMessages[0]?.storedAt || "",
           unreadCount: sortedMessages.filter((message) => !message.locallyReadAt && !message.readAt).length,
+          preview: composeDrafts[correspondent]
+            ? `Draft: ${composeDrafts[correspondent].body || composeDrafts[correspondent].subject || "Continue writing..."}`
+            : sortedMessages[0]?.decryptedPayload?.body
+                || sortedMessages[0]?.decryptedPayload?.subject
+                || "Encrypted message waiting to be opened",
+          hasDraft: Boolean(composeDrafts[correspondent]),
+          draftUpdatedAt: composeDrafts[correspondent]?.updatedAt || null,
           messages: sortedMessages
         };
       })
-      .sort((left, right) => new Date(right.latestStoredAt).getTime() - new Date(left.latestStoredAt).getTime());
-  }, [cachedMessages]);
+      .sort((left, right) => {
+        const leftTime = new Date(left.draftUpdatedAt || left.latestStoredAt).getTime();
+        const rightTime = new Date(right.draftUpdatedAt || right.latestStoredAt).getTime();
+        return rightTime - leftTime;
+      });
+  }, [cachedMessages, composeDrafts]);
 
   const activeConversation = conversations.find((conversation) => conversation.correspondent === selectedConversation)
     || conversations[0]
@@ -339,12 +395,22 @@ export default function InboxScreen() {
                 <Text style={styles.threadAvatarText}>{conversation.correspondent.slice(0, 1).toUpperCase()}</Text>
               </View>
               <View style={styles.threadBody}>
-                <Text style={styles.threadName}>{conversation.correspondent}</Text>
+                <View style={styles.threadTitleRow}>
+                  <Text style={styles.threadName}>{conversation.correspondent}</Text>
+                  {conversation.hasDraft ? <Text style={styles.draftBadge}>DRAFT</Text> : null}
+                  {conversation.unreadCount ? <View style={styles.unreadDot} /> : null}
+                </View>
+                <Text
+                  style={[styles.threadPreview, conversation.hasDraft ? styles.threadPreviewDraft : null]}
+                  numberOfLines={2}
+                >
+                  {conversation.preview}
+                </Text>
                 <Text style={styles.threadMeta}>
                   {conversation.messages.length} message(s) · {conversation.unreadCount} unread
                 </Text>
               </View>
-              <Text style={styles.threadTime}>{new Date(conversation.latestStoredAt).toLocaleDateString()}</Text>
+              <Text style={styles.threadTime}>{formatThreadTimestamp(conversation.draftUpdatedAt || conversation.latestStoredAt)}</Text>
             </Pressable>
           ))}
         </View>
@@ -523,15 +589,40 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2
   },
+  threadTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8
+  },
   threadName: {
     color: "#f5f5f5",
     fontSize: 16,
     fontWeight: "700"
   },
+  draftBadge: {
+    color: "#ff2222",
+    fontSize: 11,
+    fontWeight: "700",
+    fontFamily: "Courier"
+  },
+  unreadDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+    backgroundColor: "#ff2222"
+  },
   threadTime: {
     color: "#666666",
     fontSize: 12,
     fontFamily: "Courier"
+  },
+  threadPreview: {
+    color: "#c4c4c4",
+    fontSize: 13,
+    lineHeight: 18
+  },
+  threadPreviewDraft: {
+    color: "#ff7777"
   },
   threadMeta: {
     color: "#9a9a9a",
