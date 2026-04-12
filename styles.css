@@ -619,6 +619,23 @@ body {
   line-height: 1.45;
 }
 
+.thread-retry-button {
+  margin-left: 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(180, 0, 0, 0.48);
+  background: rgba(204, 0, 0, 0.12);
+  color: rgba(255, 220, 220, 0.88);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.thread-retry-button:hover:not(:disabled),
+.thread-retry-button:focus-visible {
+  background: rgba(204, 0, 0, 0.2);
+  border-color: rgba(255, 34, 34, 0.72);
+}
+
 /* ── Message detail overlay ──────────────────────────────────── */
 .message-detail {
   background: var(--bg-card);

@@ -621,6 +621,113 @@ function replaceInboxMessage(messageId, replacement) {
   return replaced;
 }
 
+function getInboxMessageById(messageId) {
+  return state.inbox.find((message) => message.messageId === messageId) || null;
+}
+
+async function deliverPreparedMessage(prekeyBundle, subject, body, existingMessageId = "") {
+  const envelope = await encryptForRecipient(state.currentUser, prekeyBundle, subject, body);
+  const messageTimestamp = new Date().toISOString();
+  const pendingMessageId = existingMessageId || `local-${crypto.randomUUID()}`;
+  const pendingMessage = {
+    messageId: pendingMessageId,
+    from: state.currentUser.username,
+    to: prekeyBundle.username,
+    storedAt: messageTimestamp,
+    deliveredAt: null,
+    localOnly: true,
+    deliveryState: "sending",
+    deliveryError: null,
+    envelope: {
+      protocol: envelope.protocol,
+      ephemeralKey: envelope.ephemeralKey,
+      iv: envelope.iv,
+      ciphertext: envelope.ciphertext,
+      oneTimePrekeyId: envelope.oneTimePrekeyId,
+      prekeyReservationToken: envelope.prekeyReservationToken
+    },
+    decryptedPayload: {
+      subject,
+      body,
+      sentAt: messageTimestamp,
+      senderDeviceId: state.currentUser.publicBundle.deviceId
+    }
+  };
+
+  if (existingMessageId && getInboxMessageById(existingMessageId)) {
+    replaceInboxMessage(existingMessageId, pendingMessage);
+  } else {
+    appendLocalSentMessage(pendingMessage);
+  }
+
+  try {
+    const stored = await apiRequest("/v1/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        to: prekeyBundle.username,
+        recipientDeviceId: prekeyBundle.device.deviceId,
+        envelope: {
+          protocol: envelope.protocol,
+          ephemeralKey: envelope.ephemeralKey,
+          iv: envelope.iv,
+          ciphertext: envelope.ciphertext,
+          oneTimePrekeyId: envelope.oneTimePrekeyId,
+          prekeyReservationToken: envelope.prekeyReservationToken
+        }
+      })
+    });
+
+    state.lastEnvelope = JSON.stringify({
+      ...envelope,
+      storedAt: stored.storedAt,
+      messageId: stored.messageId
+    }, null, 2);
+    replaceInboxMessage(pendingMessageId, {
+      messageId: stored.messageId,
+      from: state.currentUser.username,
+      to: prekeyBundle.username,
+      storedAt: stored.storedAt,
+      deliveredAt: stored.storedAt,
+      localOnly: true,
+      deliveryState: "sent",
+      deliveryError: null,
+      envelope: {
+        protocol: envelope.protocol,
+        ephemeralKey: envelope.ephemeralKey,
+        iv: envelope.iv,
+        ciphertext: envelope.ciphertext,
+        oneTimePrekeyId: envelope.oneTimePrekeyId,
+        prekeyReservationToken: envelope.prekeyReservationToken
+      },
+      decryptedPayload: {
+        subject,
+        body,
+        sentAt: messageTimestamp,
+        senderDeviceId: state.currentUser.publicBundle.deviceId
+      }
+    });
+    envelopeOutput.value = state.lastEnvelope;
+    setSummary(
+      envelopeSummary,
+      `<strong>${stored.messageId}</strong><br>Stored for <strong>${prekeyBundle.username}</strong> on device <strong>${prekeyBundle.device.deviceId}</strong>`
+    );
+    copyEnvelopeButton.disabled = false;
+    setStatus(
+      envelope.oneTimePrekeyId
+        ? `Encrypted envelope stored for ${prekeyBundle.username} on device ${prekeyBundle.device.deviceId} using one-time prekey ${envelope.oneTimePrekeyId}.`
+        : `Encrypted envelope stored for ${prekeyBundle.username} on device ${prekeyBundle.device.deviceId}.`
+    );
+    return stored;
+  } catch (error) {
+    updateInboxMessage(pendingMessageId, (message) => ({
+      ...message,
+      deliveryState: "failed",
+      deliveryError: error.message || "Send failed."
+    }));
+    throw error;
+  }
+}
+
 async function fetchHealth() {
   healthButton.disabled = true;
   setStatus("Checking backend health...");
@@ -926,106 +1033,48 @@ async function sendMessage() {
         `Recipient device keys changed for ${prekeyBundle.device.deviceId}. Review safety number in Bundle Lookup and click "Trust Current Device Keys" before sending.`
       );
     }
-
-    const envelope = await encryptForRecipient(state.currentUser, prekeyBundle, subject, body);
-    const pendingMessageId = `local-${crypto.randomUUID()}`;
-    const pendingMessage = {
-      messageId: pendingMessageId,
-      from: state.currentUser.username,
-      to: prekeyBundle.username,
-      storedAt: new Date().toISOString(),
-      deliveredAt: null,
-      localOnly: true,
-      deliveryState: "sending",
-      deliveryError: null,
-      envelope: {
-        protocol: envelope.protocol,
-        ephemeralKey: envelope.ephemeralKey,
-        iv: envelope.iv,
-        ciphertext: envelope.ciphertext,
-        oneTimePrekeyId: envelope.oneTimePrekeyId,
-        prekeyReservationToken: envelope.prekeyReservationToken
-      },
-      decryptedPayload: {
-        subject,
-        body,
-        sentAt: new Date().toISOString(),
-        senderDeviceId: state.currentUser.publicBundle.deviceId
-      }
-    };
-    appendLocalSentMessage(pendingMessage);
-
-    const stored = await apiRequest("/v1/messages", {
-      method: "POST",
-      body: JSON.stringify({
-        to: prekeyBundle.username,
-        recipientDeviceId: prekeyBundle.device.deviceId,
-        envelope: {
-          protocol: envelope.protocol,
-          ephemeralKey: envelope.ephemeralKey,
-          iv: envelope.iv,
-          ciphertext: envelope.ciphertext,
-          oneTimePrekeyId: envelope.oneTimePrekeyId,
-          prekeyReservationToken: envelope.prekeyReservationToken
-        }
-      })
-    });
-
-    state.lastEnvelope = JSON.stringify({
-      ...envelope,
-      storedAt: stored.storedAt,
-      messageId: stored.messageId
-    }, null, 2);
-    replaceInboxMessage(pendingMessageId, {
-      messageId: stored.messageId,
-      from: state.currentUser.username,
-      to: prekeyBundle.username,
-      storedAt: stored.storedAt,
-      deliveredAt: stored.storedAt,
-      localOnly: true,
-      deliveryState: "sent",
-      deliveryError: null,
-      envelope: {
-        protocol: envelope.protocol,
-        ephemeralKey: envelope.ephemeralKey,
-        iv: envelope.iv,
-        ciphertext: envelope.ciphertext,
-        oneTimePrekeyId: envelope.oneTimePrekeyId,
-        prekeyReservationToken: envelope.prekeyReservationToken
-      },
-      decryptedPayload: {
-        subject,
-        body,
-        sentAt: new Date().toISOString(),
-        senderDeviceId: state.currentUser.publicBundle.deviceId
-      }
-    });
-    envelopeOutput.value = state.lastEnvelope;
-    setSummary(
-      envelopeSummary,
-      `<strong>${stored.messageId}</strong><br>Stored for <strong>${prekeyBundle.username}</strong> on device <strong>${prekeyBundle.device.deviceId}</strong>`
-    );
-    copyEnvelopeButton.disabled = false;
-    setStatus(
-      envelope.oneTimePrekeyId
-        ? `Encrypted envelope stored for ${prekeyBundle.username} on device ${prekeyBundle.device.deviceId} using one-time prekey ${envelope.oneTimePrekeyId}.`
-        : `Encrypted envelope stored for ${prekeyBundle.username} on device ${prekeyBundle.device.deviceId}.`
-    );
-    return stored;
+    return await deliverPreparedMessage(prekeyBundle, subject, body);
   } catch (error) {
-    const lastPendingMessage = [...state.inbox].reverse().find((message) => message.localOnly && message.deliveryState === "sending");
-    if (lastPendingMessage) {
-      updateInboxMessage(lastPendingMessage.messageId, (message) => ({
-        ...message,
-        deliveryState: "failed",
-        deliveryError: error.message || "Send failed."
-      }));
-    }
     setStatus(error.message, "error");
     throw error;
   } finally {
     sendButton.disabled = false;
   }
+}
+
+async function retryFailedMessage(messageId) {
+  if (!state.currentUser) {
+    setStatus("Sign in before retrying failed sends.", "error");
+    return;
+  }
+
+  const message = getInboxMessageById(messageId);
+  if (!message || !message.localOnly || message.deliveryState !== "failed") {
+    setStatus("That message is not available for retry.", "error");
+    return;
+  }
+
+  const subject = message.decryptedPayload?.subject?.trim() || "";
+  const body = message.decryptedPayload?.body?.trim() || "";
+  const to = normalizeUsername(message.to || "");
+  if (!to || !subject || !body) {
+    setStatus("Failed message is missing recipient or plaintext content.", "error");
+    return;
+  }
+
+  setStatus(`Retrying failed send to ${to}...`);
+  const prekeyBundle = await fetchPrekeyBundle(to);
+  if (!prekeyBundle || !prekeyBundle.device) {
+    throw new Error("Recipient has no active prekey bundle.");
+  }
+  const trust = await assessDeviceTrust(prekeyBundle.username, prekeyBundle.device);
+  if (!trust.trusted) {
+    throw new Error(
+      `Recipient device keys changed for ${prekeyBundle.device.deviceId}. Review safety number in Bundle Lookup and click "Trust Current Device Keys" before retrying.`
+    );
+  }
+
+  return deliverPreparedMessage(prekeyBundle, subject, body, messageId);
 }
 
 async function decryptLatest() {
@@ -1404,6 +1453,10 @@ bundleSummary.addEventListener("click", (event) => {
     .then(() => setStatus(`Trusted current keys for ${normalizeUsername(username)} device ${deviceId}.`))
     .catch((error) => setStatus(error.message, "error"));
 });
+
+window.__deadp0etRetryFailedMessage = (messageId) => {
+  retryFailedMessage(messageId).catch((error) => setStatus(error.message, "error"));
+};
 
 apiBaseInput.value = localStorage.getItem(STORAGE_KEYS.apiBase) || getDefaultApiBase();
 renderLocalDeviceOptions("");

@@ -714,13 +714,16 @@
         const deliveryHint = isOutgoing
           ? `<span class="thread-message-flag thread-message-flag-outgoing">${escapeHtml(message.deliveryState || 'sent')}</span>`
           : '';
+        const retryAction = isOutgoing && message.deliveryState === 'failed'
+          ? `<button class="thread-retry-button" type="button" data-action="retry-send" data-message-id="${escapeHtml(message.messageId || '')}">Retry send</button>`
+          : '';
         const deliveryError = isOutgoing && message.deliveryState === 'failed' && message.deliveryError
-          ? `<div class="thread-message-error">${escapeHtml(message.deliveryError)}</div>`
+          ? `<div class="thread-message-error">${escapeHtml(message.deliveryError)} ${retryAction}</div>`
           : '';
         const reservationHint = message.envelope?.oneTimePrekeyId
           ? `<span class="thread-message-flag">otp ${escapeHtml(message.envelope.oneTimePrekeyId)}</span>`
           : '';
-        return `<button class="thread-message-card ${isSelected ? 'active' : ''} ${isOutgoing ? 'thread-message-card-outgoing' : ''}" type="button" data-message-id="${escapeHtml(message.messageId || '')}">
+        return `<div class="thread-message-card ${isSelected ? 'active' : ''} ${isOutgoing ? 'thread-message-card-outgoing' : ''}" data-message-id="${escapeHtml(message.messageId || '')}" tabindex="0" role="button">
           <div class="thread-message-top">
             <span class="thread-message-from">${escapeHtml(isOutgoing ? 'you' : (message.from || 'unknown'))}</span>
             <span class="thread-message-time">${escapeHtml(formatThreadTimestamp(message.storedAt))}</span>
@@ -733,7 +736,7 @@
             ${reservationHint}
           </div>
           ${deliveryError}
-        </button>`;
+        </div>`;
       }).join('');
     }
 
@@ -749,6 +752,14 @@
       renderInboxUI();
     });
     threadView.addEventListener('click', (event) => {
+      const retryTarget = event.target.closest('[data-action="retry-send"]');
+      if (retryTarget) {
+        const messageId = retryTarget.getAttribute('data-message-id') || '';
+        if (messageId && window.__deadp0etRetryFailedMessage) {
+          window.__deadp0etRetryFailedMessage(messageId);
+        }
+        return;
+      }
       const target = event.target.closest('[data-message-id]');
       if (!target) {
         return;
