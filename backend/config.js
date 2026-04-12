@@ -21,6 +21,10 @@ module.exports = {
     "/": { filePath: path.join(ROOT_DIR, "index.html"), contentType: "text/html; charset=utf-8" },
     "/index.html": { filePath: path.join(ROOT_DIR, "index.html"), contentType: "text/html; charset=utf-8" },
     "/app.js": { filePath: path.join(ROOT_DIR, "app.js"), contentType: "application/javascript; charset=utf-8" },
+    "/protocol-client.js": {
+      filePath: path.join(ROOT_DIR, "protocol-client.js"),
+      contentType: "application/javascript; charset=utf-8"
+    },
     "/styles.css": { filePath: path.join(ROOT_DIR, "styles.css"), contentType: "text/css; charset=utf-8" }
   }
 };

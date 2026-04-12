@@ -1,0 +1,11 @@
+{
+  "name": "@deadp0et/protocol-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared client-side protocol and API helpers for deadp0et",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "check": "node --check src/index.js"
+  }
+}

@@ -38,7 +38,10 @@ production messenger. To get there, we still need:
 ## Files
 
 - `index.html` and `styles.css`: product UI for account, directory, compose, and inbox flows
-- `app.js`: browser-side protocol prototype and simulated server behavior
+- `app.js`: browser-side protocol prototype and current browser client integration layer
+- `protocol-client.js`: browser-safe shared client helpers loaded ahead of `app.js`
+- `packages/protocol-client`: shared client package for browser and future mobile reuse
+- `mobile/`: Expo / React Native mobile scaffold
 - `docs/protocol.md`: protocol design draft
 - `docs/api-contract.md`: backend API contract
 
@@ -74,6 +77,28 @@ It implements the documented API contract with:
 - Business logic is split by domain rather than kept in one server file.
 - Services operate on explicit repositories instead of mutating a raw store object directly.
 - Persistence is still JSON-file based, so the main next backend step is replacing the storage implementation without rewriting the service layer.
+- Shared client logic is being extracted out of `app.js` into `packages/protocol-client`.
+- The browser currently consumes a browser-safe helper layer from `protocol-client.js`, which mirrors the reusable package surface where practical.
+
+## Client extraction status
+
+The repo now has the first shared client boundary in place for browser and mobile work.
+
+Currently extracted into `packages/protocol-client` and `protocol-client.js`:
+
+- backend API client helpers
+- username normalization and storage key helpers
+- local-device collection helpers
+- trust-record lookup/update helpers
+- trust-state evaluation helpers
+- local-device serialization and hydration helpers
+
+Still browser-specific in `app.js`:
+
+- DOM/UI updates
+- browser `localStorage` access
+- Web Crypto key generation and envelope crypto
+- clipboard and other browser-only behavior
 
 ### Run it
 
@@ -87,6 +112,7 @@ The backend also serves the browser client directly:
 
 - `GET /` serves `index.html`
 - `GET /app.js` serves the frontend script
+- `GET /protocol-client.js` serves the browser-safe shared client helpers
 - `GET /styles.css` serves the app stylesheet
 
 That means local testing can happen at a single origin, usually `http://127.0.0.1:3000/`.

@@ -1,8 +1,21 @@
-const STORAGE_KEYS = {
-  apiBase: "deadp0et.apiBase",
-  localDevices: "deadp0et.localDevices",
-  contactTrust: "deadp0et.contactTrust"
-};
+const {
+  appendLocalOneTimePrekeysRecord,
+  assessTrustState,
+  STORAGE_KEYS,
+  consumeLocalOneTimePrekeyRecord,
+  computeDeviceFingerprint,
+  createApiClient,
+  getContactTrustRecord: getSharedContactTrustRecord,
+  getLocalDeviceRecord,
+  hydrateLocalDeviceRecord,
+  listLocalDevicesForUsername,
+  normalizeApiBase,
+  normalizeUsername,
+  serializeLocalDeviceRecord: sharedSerializeLocalDeviceRecord,
+  trustDeviceFingerprint,
+  upsertContactTrustRecord,
+  upsertLocalDeviceRecord
+} = window.deadp0etProtocolClient;
 const ONE_TIME_PREKEY_BATCH_SIZE = 8;
 
 const state = {
@@ -57,6 +70,11 @@ const localDeviceSelect = document.querySelector("#local-device-select");
 const exportDeviceButton = document.querySelector("#export-device-button");
 const importDeviceButton = document.querySelector("#import-device-button");
 
+const api = createApiClient({
+  getApiBase,
+  getAccessToken: () => state.currentUser?.session?.accessToken || null
+});
+
 function setStatus(message, type = "info") {
   statusNode.textContent = message;
   statusNode.style.color = type === "error" ? "var(--danger)" : "var(--success)";
@@ -75,16 +93,12 @@ function base64ToBytes(base64) {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
-function normalizeUsername(username) {
-  return username.trim().toLowerCase();
-}
-
 function getDefaultApiBase() {
   return window.location.origin;
 }
 
 function getApiBase() {
-  const value = apiBaseInput.value.trim();
+  const value = normalizeApiBase(apiBaseInput.value);
   return value || getDefaultApiBase();
 }
 
@@ -123,35 +137,16 @@ function saveContactTrust(records) {
   localStorage.setItem(STORAGE_KEYS.contactTrust, JSON.stringify(records));
 }
 
-function makeContactTrustKey(username, deviceId) {
-  return `${normalizeUsername(username)}#${String(deviceId || "").trim()}`;
-}
-
-function makeDeviceStorageKey(username, deviceId) {
-  return `${normalizeUsername(username)}#${deviceId}`;
-}
-
 function getLocalDevicesForUsername(username) {
-  const normalized = normalizeUsername(username);
-  return Object.values(loadLocalDevices())
-    .filter((record) => record && normalizeUsername(record.username) === normalized)
-    .sort((left, right) => new Date(left.storedAt || 0).getTime() - new Date(right.storedAt || 0).getTime());
+  return listLocalDevicesForUsername(loadLocalDevices(), username);
 }
 
 function getLocalDevice(username, deviceId = "") {
-  const devices = loadLocalDevices();
-  const normalized = normalizeUsername(username);
-
-  if (deviceId) {
-    return devices[makeDeviceStorageKey(normalized, deviceId)] || null;
-  }
-
-  return devices[normalized] || getLocalDevicesForUsername(normalized)[0] || null;
+  return getLocalDeviceRecord(loadLocalDevices(), username, deviceId);
 }
 
 function storeLocalDevice(record) {
-  const devices = loadLocalDevices();
-  devices[makeDeviceStorageKey(record.username, record.deviceId)] = record;
+  const devices = upsertLocalDeviceRecord(loadLocalDevices(), record);
   saveLocalDevices(devices);
 }
 
@@ -189,49 +184,12 @@ async function sha256(text) {
   return bytesToBase64(new Uint8Array(digest));
 }
 
-function sortObjectDeep(value) {
-  if (Array.isArray(value)) {
-    return value.map(sortObjectDeep);
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-  const sorted = {};
-  for (const key of Object.keys(value).sort()) {
-    sorted[key] = sortObjectDeep(value[key]);
-  }
-  return sorted;
-}
-
-async function sha256Hex(text) {
-  const bytes = new TextEncoder().encode(text);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest))
-    .map((value) => value.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-async function computeDeviceFingerprint(username, device) {
-  const payload = {
-    username: normalizeUsername(username),
-    deviceId: device.deviceId,
-    identityKey: sortObjectDeep(device.identityKey || {}),
-    signedPrekey: sortObjectDeep(device.signedPrekey || {}),
-    prekeySignature: device.prekeySignature || ""
-  };
-  const fingerprint = await sha256Hex(JSON.stringify(payload));
-  const safetyNumber = (fingerprint.slice(0, 60).match(/.{1,5}/g) || []).join(" ");
-  return { fingerprint, safetyNumber };
-}
-
 function getContactTrustRecord(username, deviceId) {
-  const records = loadContactTrust();
-  return records[makeContactTrustKey(username, deviceId)] || null;
+  return getSharedContactTrustRecord(loadContactTrust(), username, deviceId);
 }
 
 function setContactTrustRecord(username, deviceId, record) {
-  const records = loadContactTrust();
-  records[makeContactTrustKey(username, deviceId)] = record;
+  const records = upsertContactTrustRecord(loadContactTrust(), username, deviceId, record);
   saveContactTrust(records);
 }
 
@@ -241,59 +199,15 @@ async function assessDeviceTrust(username, device) {
   const record = getContactTrustRecord(normalizedUsername, deviceId);
   const { fingerprint, safetyNumber } = await computeDeviceFingerprint(normalizedUsername, device);
   const now = new Date().toISOString();
-
-  if (!record) {
-    const nextRecord = {
-      username: normalizedUsername,
-      deviceId,
-      trustedFingerprint: fingerprint,
-      trustedSafetyNumber: safetyNumber,
-      firstSeenAt: now,
-      lastSeenAt: now,
-      status: "trusted"
-    };
-    setContactTrustRecord(normalizedUsername, deviceId, nextRecord);
-    return {
-      status: "trusted-first-seen",
-      trusted: true,
-      safetyNumber,
-      note: "First seen (TOFU).",
-      changed: false
-    };
-  }
-
-  if (record.trustedFingerprint === fingerprint) {
-    const nextRecord = {
-      ...record,
-      lastSeenAt: now,
-      trustedSafetyNumber: safetyNumber
-    };
-    setContactTrustRecord(normalizedUsername, deviceId, nextRecord);
-    return {
-      status: "trusted",
-      trusted: true,
-      safetyNumber,
-      note: "Verified key matches trusted fingerprint.",
-      changed: false
-    };
-  }
-
-  const changedRecord = {
-    ...record,
-    status: "changed",
-    lastSeenAt: now,
-    pendingFingerprint: fingerprint,
-    pendingSafetyNumber: safetyNumber,
-    changedAt: now
-  };
-  setContactTrustRecord(normalizedUsername, deviceId, changedRecord);
-  return {
-    status: "changed",
-    trusted: false,
+  const assessment = assessTrustState(record, {
+    username: normalizedUsername,
+    deviceId,
+    fingerprint,
     safetyNumber,
-    note: "Key changed since last trusted fingerprint.",
-    changed: true
-  };
+    now
+  });
+  setContactTrustRecord(normalizedUsername, deviceId, assessment.nextRecord);
+  return assessment.result;
 }
 
 async function trustCurrentDeviceFingerprint(username, device) {
@@ -302,16 +216,13 @@ async function trustCurrentDeviceFingerprint(username, device) {
   const { fingerprint, safetyNumber } = await computeDeviceFingerprint(normalizedUsername, device);
   const previous = getContactTrustRecord(normalizedUsername, deviceId);
   const now = new Date().toISOString();
-  const nextRecord = {
+  const nextRecord = trustDeviceFingerprint(previous, {
     username: normalizedUsername,
     deviceId,
-    trustedFingerprint: fingerprint,
-    trustedSafetyNumber: safetyNumber,
-    firstSeenAt: previous?.firstSeenAt || now,
-    lastSeenAt: now,
-    trustedAt: now,
-    status: "trusted"
-  };
+    fingerprint,
+    safetyNumber,
+    now
+  });
   setContactTrustRecord(normalizedUsername, deviceId, nextRecord);
   return nextRecord;
 }
@@ -407,78 +318,36 @@ async function generateDeviceBundle() {
 }
 
 async function serializeLocalDeviceRecord(username, passwordVerifier, accountId, deviceBundle) {
-  const oneTimePrekeyPrivateKeys = {};
-  for (const [keyId, privateKey] of Object.entries(deviceBundle.privateKeys.oneTimePrekeyPrivateKeys || {})) {
-    oneTimePrekeyPrivateKeys[keyId] = await exportKeyPair(privateKey);
-  }
-
-  return {
+  return sharedSerializeLocalDeviceRecord({
     username,
-    accountId,
     passwordVerifier,
-    deviceId: deviceBundle.publicBundle.deviceId,
-    publicBundle: deviceBundle.publicBundle,
-    privateKeys: {
-      identityPrivateKey: await exportKeyPair(deviceBundle.privateKeys.identityPrivateKey),
-      signedPrekeyPrivateKey: await exportKeyPair(deviceBundle.privateKeys.signedPrekeyPrivateKey),
-      oneTimePrekeyPrivateKeys
-    },
-    storedAt: new Date().toISOString()
-  };
+    accountId,
+    deviceBundle,
+    exportPrivateKey: exportKeyPair
+  });
 }
 
 async function hydrateLocalDevice(record) {
-  if (!record) {
-    return null;
-  }
-
-  const oneTimePrekeyPrivateKeys = {};
-  const serializedOneTimePrekeys = record.privateKeys.oneTimePrekeyPrivateKeys || {};
-  for (const [keyId, jwk] of Object.entries(serializedOneTimePrekeys)) {
-    oneTimePrekeyPrivateKeys[keyId] = await importPrivateKey(jwk);
-  }
-
-  return {
-    username: record.username,
-    accountId: record.accountId,
-    passwordVerifier: record.passwordVerifier,
-    publicBundle: record.publicBundle,
-    privateKeys: {
-      identityPrivateKey: await importPrivateKey(record.privateKeys.identityPrivateKey),
-      signedPrekeyPrivateKey: await importPrivateKey(record.privateKeys.signedPrekeyPrivateKey),
-      oneTimePrekeyPrivateKeys
-    }
-  };
+  return hydrateLocalDeviceRecord(record, importPrivateKey);
 }
 
 function consumeLocalOneTimePrekey(username, deviceId, keyId) {
   const record = getLocalDevice(username, deviceId);
-  if (!record?.privateKeys?.oneTimePrekeyPrivateKeys?.[keyId]) {
+  const nextRecord = consumeLocalOneTimePrekeyRecord(record, keyId);
+  if (!nextRecord) {
     return false;
   }
-
-  delete record.privateKeys.oneTimePrekeyPrivateKeys[keyId];
-  storeLocalDevice(record);
+  storeLocalDevice(nextRecord);
   return true;
 }
 
 async function appendLocalOneTimePrekeys(username, deviceId, privateOneTimePrekeyKeys, publicOneTimePrekeys = []) {
   const record = getLocalDevice(username, deviceId);
-  if (!record) {
+  const nextRecord = await appendLocalOneTimePrekeysRecord(record, privateOneTimePrekeyKeys, publicOneTimePrekeys, exportKeyPair);
+  if (!nextRecord) {
     return false;
   }
-
-  record.privateKeys = record.privateKeys || {};
-  record.privateKeys.oneTimePrekeyPrivateKeys = record.privateKeys.oneTimePrekeyPrivateKeys || {};
-  for (const [keyId, privateKey] of Object.entries(privateOneTimePrekeyKeys || {})) {
-    record.privateKeys.oneTimePrekeyPrivateKeys[keyId] = await exportKeyPair(privateKey);
-  }
-
-  record.publicBundle = record.publicBundle || {};
-  const existingPublicPrekeys = Array.isArray(record.publicBundle.oneTimePrekeys) ? record.publicBundle.oneTimePrekeys : [];
-  record.publicBundle.oneTimePrekeys = [...existingPublicPrekeys, ...publicOneTimePrekeys];
-  record.storedAt = new Date().toISOString();
-  storeLocalDevice(record);
+  storeLocalDevice(nextRecord);
   return true;
 }
 
@@ -499,29 +368,7 @@ async function deriveSharedSecret(privateKey, remotePublicJwk) {
 }
 
 async function apiRequest(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  if (!headers.has("Content-Type") && options.body !== undefined) {
-    headers.set("Content-Type", "application/json");
-  }
-
-  if (state.currentUser?.session?.accessToken && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${state.currentUser.session.accessToken}`);
-  }
-
-  const response = await fetch(`${getApiBase()}${path}`, {
-    ...options,
-    headers
-  });
-
-  const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
-
-  if (!response.ok) {
-    const message = payload?.error?.message || `Request failed with ${response.status}.`;
-    throw new Error(message);
-  }
-
-  return payload;
+  return api.request(path, options);
 }
 
 async function renderLookupResult(payload = null) {
@@ -713,10 +560,7 @@ async function fetchHealth() {
   setStatus("Checking backend health...");
 
   try {
-    const payload = await fetch(`${getApiBase()}/health`).then(async (response) => {
-      const text = await response.text();
-      return text ? JSON.parse(text) : {};
-    });
+    const payload = await api.getHealth();
     healthOutput.value = JSON.stringify(payload, null, 2);
     setSummary(
       healthSummary,
@@ -745,10 +589,7 @@ async function fetchBundles(username = lookupUsername.value) {
   setStatus(`Fetching public bundles for ${normalized}...`);
 
   try {
-    const payload = await apiRequest(`/v1/users/${encodeURIComponent(normalized)}/bundles`, {
-      method: "GET",
-      headers: {}
-    });
+    const payload = await api.getBundles(normalized);
     await renderLookupResult(payload);
     setStatus(`Fetched ${payload.devices.length} active bundle(s) for ${payload.username}.`);
     return payload;
@@ -768,10 +609,7 @@ async function fetchPrekeyBundle(username, deviceId = "") {
   }
 
   const body = deviceId ? { deviceId } : {};
-  const payload = await apiRequest(`/v1/users/${encodeURIComponent(normalized)}/prekey-bundle`, {
-    method: "POST",
-    body: JSON.stringify(body)
-  });
+  const payload = await api.issuePrekeyBundle(normalized, body);
 
   await renderLookupResult({
     username: payload.username,
@@ -793,10 +631,7 @@ async function fetchInbox() {
   setStatus(`Fetching ciphertext inbox for ${state.currentUser.username}...`);
 
   try {
-    const payload = await apiRequest("/v1/messages/inbox", {
-      method: "GET",
-      headers: {}
-    });
+    const payload = await api.getInbox();
     renderInbox(payload.messages || []);
     setStatus(`Fetched ${payload.messages.length} encrypted message(s) for ${payload.deviceId}.`);
     return payload.messages || [];
@@ -819,10 +654,7 @@ async function fetchDevices() {
   setStatus(`Fetching devices for ${state.currentUser.username}...`);
 
   try {
-    const payload = await apiRequest("/v1/devices", {
-      method: "GET",
-      headers: {}
-    });
+    const payload = await api.listDevices();
     renderDevices(payload);
     setStatus(`Fetched ${payload.devices.length} device record(s) for ${payload.username}.`);
     return payload.devices || [];
