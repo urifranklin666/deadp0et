@@ -682,7 +682,7 @@
         const preview = latestPayload
           ? `${latestPayload.subject || ''} ${latestPayload.body || ''}`.trim()
           : thread.latest?.localOnly
-            ? '[sent locally]'
+            ? `[${thread.latest?.deliveryState || 'sent'}]`
             : thread.latest?.envelope
               ? '[encrypted envelope]'
               : JSON.stringify(thread.latest || {}).slice(0, 48) + '...';
@@ -714,6 +714,9 @@
         const deliveryHint = isOutgoing
           ? `<span class="thread-message-flag thread-message-flag-outgoing">${escapeHtml(message.deliveryState || 'sent')}</span>`
           : '';
+        const deliveryError = isOutgoing && message.deliveryState === 'failed' && message.deliveryError
+          ? `<div class="thread-message-error">${escapeHtml(message.deliveryError)}</div>`
+          : '';
         const reservationHint = message.envelope?.oneTimePrekeyId
           ? `<span class="thread-message-flag">otp ${escapeHtml(message.envelope.oneTimePrekeyId)}</span>`
           : '';
@@ -729,6 +732,7 @@
             ${deliveryHint}
             ${reservationHint}
           </div>
+          ${deliveryError}
         </button>`;
       }).join('');
     }

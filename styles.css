@@ -612,6 +612,13 @@ body {
   color: rgba(255, 196, 196, 0.82);
 }
 
+.thread-message-error {
+  margin-top: 10px;
+  color: rgba(255, 132, 132, 0.86);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
 /* ── Message detail overlay ──────────────────────────────────── */
 .message-detail {
   background: var(--bg-card);

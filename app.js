@@ -603,6 +603,24 @@ function appendLocalSentMessage(message) {
   renderInbox();
 }
 
+function replaceInboxMessage(messageId, replacement) {
+  let replaced = false;
+  state.inbox = state.inbox.map((message) => {
+    if (message.messageId !== messageId) {
+      return message;
+    }
+    replaced = true;
+    return replacement;
+  });
+  if (replaced) {
+    if (selectedMessageIdInput?.value === messageId) {
+      selectedMessageIdInput.value = replacement.messageId || "";
+    }
+    renderInbox();
+  }
+  return replaced;
+}
+
 async function fetchHealth() {
   healthButton.disabled = true;
   setStatus("Checking backend health...");
@@ -910,6 +928,32 @@ async function sendMessage() {
     }
 
     const envelope = await encryptForRecipient(state.currentUser, prekeyBundle, subject, body);
+    const pendingMessageId = `local-${crypto.randomUUID()}`;
+    const pendingMessage = {
+      messageId: pendingMessageId,
+      from: state.currentUser.username,
+      to: prekeyBundle.username,
+      storedAt: new Date().toISOString(),
+      deliveredAt: null,
+      localOnly: true,
+      deliveryState: "sending",
+      deliveryError: null,
+      envelope: {
+        protocol: envelope.protocol,
+        ephemeralKey: envelope.ephemeralKey,
+        iv: envelope.iv,
+        ciphertext: envelope.ciphertext,
+        oneTimePrekeyId: envelope.oneTimePrekeyId,
+        prekeyReservationToken: envelope.prekeyReservationToken
+      },
+      decryptedPayload: {
+        subject,
+        body,
+        sentAt: new Date().toISOString(),
+        senderDeviceId: state.currentUser.publicBundle.deviceId
+      }
+    };
+    appendLocalSentMessage(pendingMessage);
 
     const stored = await apiRequest("/v1/messages", {
       method: "POST",
@@ -932,7 +976,7 @@ async function sendMessage() {
       storedAt: stored.storedAt,
       messageId: stored.messageId
     }, null, 2);
-    appendLocalSentMessage({
+    replaceInboxMessage(pendingMessageId, {
       messageId: stored.messageId,
       from: state.currentUser.username,
       to: prekeyBundle.username,
@@ -940,6 +984,7 @@ async function sendMessage() {
       deliveredAt: stored.storedAt,
       localOnly: true,
       deliveryState: "sent",
+      deliveryError: null,
       envelope: {
         protocol: envelope.protocol,
         ephemeralKey: envelope.ephemeralKey,
@@ -968,6 +1013,14 @@ async function sendMessage() {
     );
     return stored;
   } catch (error) {
+    const lastPendingMessage = [...state.inbox].reverse().find((message) => message.localOnly && message.deliveryState === "sending");
+    if (lastPendingMessage) {
+      updateInboxMessage(lastPendingMessage.messageId, (message) => ({
+        ...message,
+        deliveryState: "failed",
+        deliveryError: error.message || "Send failed."
+      }));
+    }
     setStatus(error.message, "error");
     throw error;
   } finally {
