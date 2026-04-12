@@ -1039,6 +1039,535 @@ test("deadp0et enforces active session caps by revoking oldest sessions", async 
   assert.equal(activeSessions.length, 2);
 });
 
+test("deadp0et lists and revokes account sessions", async (t) => {
+  const { baseUrl } = await startServer(t);
+
+  const create = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-iris-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-1"
+      }
+    })
+  });
+
+  assert.equal(create.status, 201);
+
+  const secondLogin = await requestJson(baseUrl, "/v1/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      deviceId: "device-iris-1"
+    })
+  });
+
+  assert.equal(secondLogin.status, 200);
+
+  const listed = await requestJson(baseUrl, "/v1/sessions", {
+    headers: {
+      Authorization: `Bearer ${secondLogin.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(listed.status, 200);
+  assert.equal(listed.body.username, "iris");
+  assert.equal(listed.body.sessions.length, 2);
+  assert.equal(listed.body.sessions.filter((session) => session.current).length, 1);
+  assert.equal(listed.body.currentSessionId, listed.body.sessions.find((session) => session.current).sessionId);
+
+  const originalSession = listed.body.sessions.find((session) => session.sessionId !== listed.body.currentSessionId);
+  assert.ok(originalSession);
+
+  const revokeOriginal = await requestJson(baseUrl, `/v1/sessions/${originalSession.sessionId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${secondLogin.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(revokeOriginal.status, 200);
+  assert.equal(revokeOriginal.body.revoked, 1);
+  assert.equal(revokeOriginal.body.sessionId, originalSession.sessionId);
+
+  const revokedUse = await requestJson(baseUrl, "/v1/messages/inbox", {
+    headers: {
+      Authorization: `Bearer ${create.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(revokedUse.status, 401);
+
+  const logoutCurrent = await requestJson(baseUrl, "/v1/sessions/current", {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${secondLogin.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(logoutCurrent.status, 200);
+  assert.equal(logoutCurrent.body.revoked, 1);
+  assert.equal(typeof logoutCurrent.body.sessionId, "string");
+
+  const afterLogout = await requestJson(baseUrl, "/v1/sessions", {
+    headers: {
+      Authorization: `Bearer ${secondLogin.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(afterLogout.status, 401);
+});
+
+test("deadp0et does not let accounts revoke another account's sessions", async (t) => {
+  const { baseUrl } = await startServer(t);
+
+  const iris = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-iris-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-1"
+      }
+    })
+  });
+
+  const noor = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "noor",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-noor-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-2"
+      }
+    })
+  });
+
+  assert.equal(iris.status, 201);
+  assert.equal(noor.status, 201);
+
+  const noorSessions = await requestJson(baseUrl, "/v1/sessions", {
+    headers: {
+      Authorization: `Bearer ${noor.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(noorSessions.status, 200);
+  assert.equal(noorSessions.body.sessions.length, 1);
+
+  const revokeByOtherAccount = await requestJson(baseUrl, `/v1/sessions/${noorSessions.body.sessions[0].sessionId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${iris.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(revokeByOtherAccount.status, 404);
+});
+
+test("deadp0et paginates inbox reads with cursors", async (t) => {
+  const { baseUrl } = await startServer(t);
+
+  const iris = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-iris-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-1"
+      }
+    })
+  });
+
+  const noor = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "noor",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-noor-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-2"
+      }
+    })
+  });
+
+  assert.equal(iris.status, 201);
+  assert.equal(noor.status, 201);
+
+  for (const suffix of ["one", "two", "three"]) {
+    const bundle = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    assert.equal(bundle.status, 200);
+
+    const delivered = await requestJson(baseUrl, "/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${iris.body.session.accessToken}`
+      },
+      body: JSON.stringify({
+        to: "noor",
+        recipientDeviceId: "device-noor-1",
+        envelope: {
+          protocol: "deadp0et-envelope-v1",
+          ephemeralKey: { kty: "EC", crv: "P-256", x: suffix },
+          iv: `demo-iv-${suffix}`,
+          ciphertext: `demo-ciphertext-${suffix}`,
+          prekeyReservationToken: bundle.body.prekeyReservationToken
+        }
+      })
+    });
+
+    assert.equal(delivered.status, 201);
+  }
+
+  const firstPage = await requestJson(baseUrl, "/v1/messages/inbox?limit=2", {
+    headers: {
+      Authorization: `Bearer ${noor.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(firstPage.status, 200);
+  assert.equal(firstPage.body.messages.length, 2);
+  assert.equal(typeof firstPage.body.nextCursor, "string");
+  assert.equal(firstPage.body.messages[0].deliveryCount, 1);
+  assert.equal(firstPage.body.messages[1].deliveryCount, 1);
+
+  const secondPage = await requestJson(baseUrl, `/v1/messages/inbox?limit=2&cursor=${encodeURIComponent(firstPage.body.nextCursor)}`, {
+    headers: {
+      Authorization: `Bearer ${noor.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(secondPage.status, 200);
+  assert.equal(secondPage.body.messages.length, 1);
+  assert.equal(secondPage.body.nextCursor, null);
+  assert.equal(secondPage.body.messages[0].deliveryCount, 1);
+
+  const invalidCursor = await requestJson(baseUrl, "/v1/messages/inbox?cursor=not-valid", {
+    headers: {
+      Authorization: `Bearer ${noor.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(invalidCursor.status, 400);
+});
+
+test("deadp0et exposes non-mutating paged message history", async (t) => {
+  const { baseUrl } = await startServer(t);
+
+  const iris = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-iris-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-1"
+      }
+    })
+  });
+
+  const noor = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "noor",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-noor-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-2"
+      }
+    })
+  });
+
+  assert.equal(iris.status, 201);
+  assert.equal(noor.status, 201);
+
+  const toNoorBundle = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  assert.equal(toNoorBundle.status, 200);
+
+  const irisToNoor = await requestJson(baseUrl, "/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${iris.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      to: "noor",
+      recipientDeviceId: "device-noor-1",
+      envelope: {
+        protocol: "deadp0et-envelope-v1",
+        ephemeralKey: { kty: "EC", crv: "P-256", x: "history-one" },
+        iv: "iv-history-one",
+        ciphertext: "cipher-history-one",
+        prekeyReservationToken: toNoorBundle.body.prekeyReservationToken
+      }
+    })
+  });
+  assert.equal(irisToNoor.status, 201);
+
+  const toIrisBundle = await requestJson(baseUrl, "/v1/users/iris/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  assert.equal(toIrisBundle.status, 200);
+
+  const noorToIris = await requestJson(baseUrl, "/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${noor.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      to: "iris",
+      recipientDeviceId: "device-iris-1",
+      envelope: {
+        protocol: "deadp0et-envelope-v1",
+        ephemeralKey: { kty: "EC", crv: "P-256", x: "history-two" },
+        iv: "iv-history-two",
+        ciphertext: "cipher-history-two",
+        prekeyReservationToken: toIrisBundle.body.prekeyReservationToken
+      }
+    })
+  });
+  assert.equal(noorToIris.status, 201);
+
+  const historyPage = await requestJson(baseUrl, "/v1/messages/history?correspondent=noor&limit=1", {
+    headers: {
+      Authorization: `Bearer ${iris.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(historyPage.status, 200);
+  assert.equal(historyPage.body.messages.length, 1);
+  assert.equal(historyPage.body.correspondent, "noor");
+  assert.equal(typeof historyPage.body.nextCursor, "string");
+  assert.equal(historyPage.body.messages[0].deliveryCount, 0);
+  assert.equal(historyPage.body.messages[0].deliveredAt, null);
+
+  const historyOlderPage = await requestJson(baseUrl, `/v1/messages/history?correspondent=noor&limit=1&before=${encodeURIComponent(historyPage.body.nextCursor)}`, {
+    headers: {
+      Authorization: `Bearer ${iris.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(historyOlderPage.status, 200);
+  assert.equal(historyOlderPage.body.messages.length, 1);
+  assert.equal(historyOlderPage.body.nextCursor, null);
+
+  const invalidHistoryCursor = await requestJson(baseUrl, "/v1/messages/history?before=nope", {
+    headers: {
+      Authorization: `Bearer ${iris.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(invalidHistoryCursor.status, 400);
+});
+
+test("deadp0et exposes paged conversation summaries", async (t) => {
+  const { baseUrl } = await startServer(t);
+
+  const iris = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-iris-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-1"
+      }
+    })
+  });
+
+  const noor = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "noor",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-noor-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-2"
+      }
+    })
+  });
+
+  const rune = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "rune",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-rune-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-3"
+      }
+    })
+  });
+
+  assert.equal(iris.status, 201);
+  assert.equal(noor.status, 201);
+  assert.equal(rune.status, 201);
+
+  const bundleToIrisFromNoor = await requestJson(baseUrl, "/v1/users/iris/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  const bundleToIrisFromRune = await requestJson(baseUrl, "/v1/users/iris/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  const bundleToNoorFromIris = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+
+  assert.equal(bundleToIrisFromNoor.status, 200);
+  assert.equal(bundleToIrisFromRune.status, 200);
+  assert.equal(bundleToNoorFromIris.status, 200);
+
+  const noorToIris = await requestJson(baseUrl, "/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${noor.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      to: "iris",
+      recipientDeviceId: "device-iris-1",
+      envelope: {
+        protocol: "deadp0et-envelope-v1",
+        ephemeralKey: { kty: "EC", crv: "P-256", x: "conv-one" },
+        iv: "iv-conv-one",
+        ciphertext: "cipher-conv-one",
+        prekeyReservationToken: bundleToIrisFromNoor.body.prekeyReservationToken
+      }
+    })
+  });
+
+  const runeToIris = await requestJson(baseUrl, "/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${rune.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      to: "iris",
+      recipientDeviceId: "device-iris-1",
+      envelope: {
+        protocol: "deadp0et-envelope-v1",
+        ephemeralKey: { kty: "EC", crv: "P-256", x: "conv-two" },
+        iv: "iv-conv-two",
+        ciphertext: "cipher-conv-two",
+        prekeyReservationToken: bundleToIrisFromRune.body.prekeyReservationToken
+      }
+    })
+  });
+
+  const irisToNoor = await requestJson(baseUrl, "/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${iris.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      to: "noor",
+      recipientDeviceId: "device-noor-1",
+      envelope: {
+        protocol: "deadp0et-envelope-v1",
+        ephemeralKey: { kty: "EC", crv: "P-256", x: "conv-three" },
+        iv: "iv-conv-three",
+        ciphertext: "cipher-conv-three",
+        prekeyReservationToken: bundleToNoorFromIris.body.prekeyReservationToken
+      }
+    })
+  });
+
+  assert.equal(noorToIris.status, 201);
+  assert.equal(runeToIris.status, 201);
+  assert.equal(irisToNoor.status, 201);
+
+  const summariesFirstPage = await requestJson(baseUrl, "/v1/messages/conversations?limit=1", {
+    headers: {
+      Authorization: `Bearer ${iris.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(summariesFirstPage.status, 200);
+  assert.equal(summariesFirstPage.body.conversations.length, 1);
+  assert.equal(typeof summariesFirstPage.body.nextCursor, "string");
+  assert.equal(summariesFirstPage.body.conversations[0].correspondent, "noor");
+  assert.equal(summariesFirstPage.body.conversations[0].messageCount, 2);
+  assert.equal(summariesFirstPage.body.conversations[0].unreadCount, 1);
+  assert.equal(summariesFirstPage.body.conversations[0].latestMessage.from, "iris");
+
+  const summariesSecondPage = await requestJson(baseUrl, `/v1/messages/conversations?limit=1&before=${encodeURIComponent(summariesFirstPage.body.nextCursor)}`, {
+    headers: {
+      Authorization: `Bearer ${iris.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(summariesSecondPage.status, 200);
+  assert.equal(summariesSecondPage.body.conversations.length, 1);
+  assert.equal(summariesSecondPage.body.conversations[0].correspondent, "rune");
+  assert.equal(summariesSecondPage.body.conversations[0].unreadCount, 1);
+  assert.equal(summariesSecondPage.body.nextCursor, null);
+
+  const invalidConversationCursor = await requestJson(baseUrl, "/v1/messages/conversations?before=bad-cursor", {
+    headers: {
+      Authorization: `Bearer ${iris.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(invalidConversationCursor.status, 400);
+});
+
 test("deadp0et throttles repeated login failures and recovers after block window", async (t) => {
   const { baseUrl } = await startServer(t, {
     AUTH_WINDOW_MS: "60000",

@@ -179,6 +179,17 @@ function createAuthService(ctx) {
     return session;
   }
 
+  function buildSessionResponse(session, currentSessionId = "") {
+    return {
+      sessionId: session.sessionId,
+      deviceId: session.deviceId,
+      createdAt: session.createdAt,
+      expiresAt: session.expiresAt,
+      revokedAt: session.revokedAt || null,
+      current: session.sessionId === currentSessionId
+    };
+  }
+
   function getClientIp(request) {
     const forwardedFor = request.headers["x-forwarded-for"];
     if (typeof forwardedFor === "string" && forwardedFor.trim()) {
@@ -358,9 +369,70 @@ function createAuthService(ctx) {
     });
   }
 
+  function handleListSessions(response, auth) {
+    const changed = pruneSessionsForAccount(auth.account.accountId);
+    if (changed) {
+      ctx.repository.saveStore();
+    }
+
+    const sessions = ctx.repository.sessions
+      .filter((session) => session.accountId === auth.account.accountId)
+      .sort((left, right) => Date.parse(right.createdAt || 0) - Date.parse(left.createdAt || 0))
+      .map((session) => buildSessionResponse(session, auth.session.sessionId));
+
+    sendJson(response, 200, {
+      accountId: auth.account.accountId,
+      username: auth.account.username,
+      currentSessionId: auth.session.sessionId,
+      sessions
+    });
+  }
+
+  function handleDeleteCurrentSession(response, auth) {
+    const changed = revokeSession(auth.session, ctx.nowIso());
+    if (changed) {
+      ctx.repository.saveStore();
+    }
+
+    sendJson(response, 200, {
+      revoked: changed ? 1 : 0,
+      sessionId: auth.session.sessionId
+    });
+  }
+
+  function handleDeleteSession(response, auth, sessionId) {
+    const normalizedSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
+    if (!normalizedSessionId) {
+      sendError(response, 400, "sessionId is required.");
+      return;
+    }
+
+    const targetSession = ctx.repository.sessions.find((session) => (
+      session.sessionId === normalizedSessionId && session.accountId === auth.account.accountId
+    ));
+
+    if (!targetSession) {
+      sendError(response, 404, "Session not found.");
+      return;
+    }
+
+    const changed = revokeSession(targetSession, ctx.nowIso());
+    if (changed) {
+      ctx.repository.saveStore();
+    }
+
+    sendJson(response, 200, {
+      revoked: changed ? 1 : 0,
+      sessionId: targetSession.sessionId
+    });
+  }
+
   return {
     handleCreateAccount,
     handleCreateSession,
+    handleDeleteCurrentSession,
+    handleDeleteSession,
+    handleListSessions,
     issueSession,
     requireAuth
   };

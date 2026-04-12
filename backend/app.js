@@ -31,11 +31,46 @@ function createRequestHandler(config, service) {
       }
 
       if (pathname === "/v1/sessions") {
+        if (request.method === "GET") {
+          const auth = service.requireAuth(request, response);
+          if (!auth) {
+            return;
+          }
+          service.handleListSessions(response, auth);
+          return;
+        }
         if (request.method !== "POST") {
           methodNotAllowed(response, request.method);
           return;
         }
         await service.handleCreateSession(request, response);
+        return;
+      }
+
+      if (pathname === "/v1/sessions/current") {
+        if (request.method !== "DELETE") {
+          methodNotAllowed(response, request.method);
+          return;
+        }
+        const auth = service.requireAuth(request, response);
+        if (!auth) {
+          return;
+        }
+        service.handleDeleteCurrentSession(response, auth);
+        return;
+      }
+
+      if (pathname.startsWith("/v1/sessions/")) {
+        if (request.method !== "DELETE") {
+          methodNotAllowed(response, request.method);
+          return;
+        }
+        const auth = service.requireAuth(request, response);
+        if (!auth) {
+          return;
+        }
+        const sessionId = decodeURIComponent(pathname.slice("/v1/sessions/".length));
+        service.handleDeleteSession(response, auth, sessionId);
         return;
       }
 
@@ -74,6 +109,24 @@ function createRequestHandler(config, service) {
           return;
         }
         methodNotAllowed(response, request.method);
+        return;
+      }
+
+      if (pathname === "/v1/messages/history") {
+        if (request.method !== "GET") {
+          methodNotAllowed(response, request.method);
+          return;
+        }
+        service.handleHistory(request, response);
+        return;
+      }
+
+      if (pathname === "/v1/messages/conversations") {
+        if (request.method !== "GET") {
+          methodNotAllowed(response, request.method);
+          return;
+        }
+        service.handleConversations(request, response);
         return;
       }
 

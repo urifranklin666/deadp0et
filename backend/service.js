@@ -13,13 +13,18 @@ function createBackendService(config, repository) {
 
   return {
     handleAcknowledgeInbox: messages.handleAcknowledgeInbox,
+    handleConversations: messages.handleConversations,
     handleCreateAccount: auth.handleCreateAccount,
     handleCreateSession: auth.handleCreateSession,
+    handleDeleteCurrentSession: auth.handleDeleteCurrentSession,
+    handleDeleteSession: auth.handleDeleteSession,
     handleDeleteDevice: devices.handleDeleteDevice,
     handleGetBundles: prekeys.handleGetBundles,
     handleHealth: devices.handleHealth,
+    handleHistory: messages.handleHistory,
     handleInbox: messages.handleInbox,
     handleIssuePrekeyBundle: prekeys.handleIssuePrekeyBundle,
+    handleListSessions: auth.handleListSessions,
     handleListDevices: devices.handleListDevices,
     handleRegisterDevice: devices.handleRegisterDevice,
     handleRotatePrekeys: devices.handleRotatePrekeys,

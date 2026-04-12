@@ -1,6 +1,98 @@
 const { parseUrl, readJsonBody, sendError, sendJson } = require("./http");
 
 function createMessageService(ctx, auth, prekeys) {
+  const DEFAULT_PAGE_SIZE = 50;
+  const MAX_PAGE_SIZE = 100;
+
+  function serializeMessage(message) {
+    return {
+      messageId: message.messageId,
+      to: message.to,
+      recipientDeviceId: message.recipientDeviceId,
+      from: message.from,
+      senderDeviceId: message.senderDeviceId,
+      storedAt: message.storedAt,
+      deliveredAt: message.deliveredAt || null,
+      readAt: message.readAt || null,
+      deliveryCount: message.deliveryCount || 0,
+      envelope: message.envelope
+    };
+  }
+
+  function parsePageSize(rawValue) {
+    if (rawValue === null) {
+      return DEFAULT_PAGE_SIZE;
+    }
+    const value = Number.parseInt(rawValue, 10);
+    if (!Number.isFinite(value) || value <= 0) {
+      return null;
+    }
+    return Math.min(value, MAX_PAGE_SIZE);
+  }
+
+  function encodeCursor(message) {
+    return Buffer.from(JSON.stringify({
+      storedAt: message.storedAt,
+      messageId: message.messageId
+    })).toString("base64url");
+  }
+
+  function decodeCursor(cursor) {
+    if (!cursor || typeof cursor !== "string") {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+      if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+      if (typeof parsed.storedAt !== "string" || !parsed.storedAt.trim()) {
+        return null;
+      }
+      if (typeof parsed.messageId !== "string" || !parsed.messageId.trim()) {
+        return null;
+      }
+      return parsed;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function compareMessagesAscending(left, right) {
+    const leftTime = Date.parse(left.storedAt || 0);
+    const rightTime = Date.parse(right.storedAt || 0);
+    if (leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    return String(left.messageId || "").localeCompare(String(right.messageId || ""));
+  }
+
+  function compareMessagesDescending(left, right) {
+    return compareMessagesAscending(right, left);
+  }
+
+  function isAfterCursor(message, cursor) {
+    if (!cursor) {
+      return true;
+    }
+    const timeComparison = Date.parse(message.storedAt || 0) - Date.parse(cursor.storedAt || 0);
+    if (timeComparison !== 0) {
+      return timeComparison > 0;
+    }
+    return String(message.messageId || "") > String(cursor.messageId || "");
+  }
+
+  function isBeforeCursor(message, cursor) {
+    if (!cursor) {
+      return true;
+    }
+    const timeComparison = Date.parse(message.storedAt || 0) - Date.parse(cursor.storedAt || 0);
+    if (timeComparison !== 0) {
+      return timeComparison < 0;
+    }
+    return String(message.messageId || "") < String(cursor.messageId || "");
+  }
+
   async function handleStoreMessage(request, response) {
     const authState = auth.requireAuth(request, response);
     if (!authState) {
@@ -119,10 +211,21 @@ function createMessageService(ctx, auth, prekeys) {
 
     const url = parseUrl(request);
     const deviceIdFilter = url.searchParams.get("deviceId") || authState.session.deviceId;
+    const pageSize = parsePageSize(url.searchParams.get("limit"));
+    const cursor = decodeCursor(url.searchParams.get("cursor"));
+
+    if (pageSize === null) {
+      sendError(response, 400, `limit must be an integer between 1 and ${MAX_PAGE_SIZE}.`);
+      return;
+    }
+    if (url.searchParams.get("cursor") && !cursor) {
+      sendError(response, 400, "cursor is invalid.");
+      return;
+    }
 
     let storeChanged = false;
 
-    const messages = ctx.repository.messages
+    const matchingMessages = ctx.repository.messages
       .all()
       .filter((message) => {
         if (message.expiredAt) {
@@ -136,6 +239,13 @@ function createMessageService(ctx, auth, prekeys) {
         }
         return true;
       })
+      .sort(compareMessagesAscending);
+
+    const pageMessages = matchingMessages
+      .filter((message) => isAfterCursor(message, cursor))
+      .slice(0, pageSize);
+
+    const messages = pageMessages
       .map((message) => {
         if (!message.deliveredAt) {
           message.deliveredAt = ctx.nowIso();
@@ -143,28 +253,180 @@ function createMessageService(ctx, auth, prekeys) {
         message.deliveryCount = (message.deliveryCount || 0) + 1;
         storeChanged = true;
 
-        return {
-          messageId: message.messageId,
-          to: message.to,
-          recipientDeviceId: message.recipientDeviceId,
-          from: message.from,
-          senderDeviceId: message.senderDeviceId,
-          storedAt: message.storedAt,
-          deliveredAt: message.deliveredAt,
-          readAt: message.readAt || null,
-          deliveryCount: message.deliveryCount,
-          envelope: message.envelope
-        };
+        return serializeMessage(message);
       });
 
     if (storeChanged) {
       ctx.repository.saveStore();
     }
 
+    const hasMore = matchingMessages.filter((message) => isAfterCursor(message, cursor)).length > messages.length;
+    const nextCursor = messages.length && hasMore ? encodeCursor(messages[messages.length - 1]) : null;
+
     sendJson(response, 200, {
       username: authState.account.username,
       deviceId: deviceIdFilter || null,
+      limit: pageSize,
+      nextCursor,
       messages
+    });
+  }
+
+  function handleHistory(request, response) {
+    const reconciled = prekeys.reconcilePrekeyReservations();
+    if (reconciled) {
+      ctx.repository.saveStore();
+    }
+
+    const authState = auth.requireAuth(request, response);
+    if (!authState) {
+      return;
+    }
+
+    const url = parseUrl(request);
+    const deviceIdFilter = url.searchParams.get("deviceId") || authState.session.deviceId;
+    const correspondent = ctx.normalizeUsername(url.searchParams.get("correspondent"));
+    const pageSize = parsePageSize(url.searchParams.get("limit"));
+    const beforeCursor = decodeCursor(url.searchParams.get("before"));
+
+    if (pageSize === null) {
+      sendError(response, 400, `limit must be an integer between 1 and ${MAX_PAGE_SIZE}.`);
+      return;
+    }
+    if (url.searchParams.get("before") && !beforeCursor) {
+      sendError(response, 400, "before cursor is invalid.");
+      return;
+    }
+
+    const matchingMessages = ctx.repository.messages
+      .all()
+      .filter((message) => {
+        if (message.expiredAt) {
+          return false;
+        }
+
+        const isInbound = (
+          message.to === authState.account.username &&
+          (!deviceIdFilter || message.recipientDeviceId === deviceIdFilter)
+        );
+        const isOutbound = (
+          message.from === authState.account.username &&
+          (!deviceIdFilter || message.senderDeviceId === deviceIdFilter)
+        );
+
+        if (!isInbound && !isOutbound) {
+          return false;
+        }
+
+        if (!correspondent) {
+          return true;
+        }
+
+        const otherParty = isOutbound ? message.to : message.from;
+        return otherParty === correspondent;
+      })
+      .sort(compareMessagesDescending);
+
+    const pageMessages = matchingMessages
+      .filter((message) => isBeforeCursor(message, beforeCursor))
+      .slice(0, pageSize);
+
+    const hasMore = matchingMessages.filter((message) => isBeforeCursor(message, beforeCursor)).length > pageMessages.length;
+    const nextCursor = pageMessages.length && hasMore ? encodeCursor(pageMessages[pageMessages.length - 1]) : null;
+
+    sendJson(response, 200, {
+      username: authState.account.username,
+      deviceId: deviceIdFilter || null,
+      correspondent: correspondent || null,
+      limit: pageSize,
+      nextCursor,
+      messages: pageMessages.map(serializeMessage)
+    });
+  }
+
+  function handleConversations(request, response) {
+    const reconciled = prekeys.reconcilePrekeyReservations();
+    if (reconciled) {
+      ctx.repository.saveStore();
+    }
+
+    const authState = auth.requireAuth(request, response);
+    if (!authState) {
+      return;
+    }
+
+    const url = parseUrl(request);
+    const deviceIdFilter = url.searchParams.get("deviceId") || authState.session.deviceId;
+    const pageSize = parsePageSize(url.searchParams.get("limit"));
+    const beforeCursor = decodeCursor(url.searchParams.get("before"));
+
+    if (pageSize === null) {
+      sendError(response, 400, `limit must be an integer between 1 and ${MAX_PAGE_SIZE}.`);
+      return;
+    }
+    if (url.searchParams.get("before") && !beforeCursor) {
+      sendError(response, 400, "before cursor is invalid.");
+      return;
+    }
+
+    const conversationMap = new Map();
+
+    for (const message of ctx.repository.messages.all()) {
+      if (message.expiredAt) {
+        continue;
+      }
+
+      const isInbound = (
+        message.to === authState.account.username &&
+        (!deviceIdFilter || message.recipientDeviceId === deviceIdFilter)
+      );
+      const isOutbound = (
+        message.from === authState.account.username &&
+        (!deviceIdFilter || message.senderDeviceId === deviceIdFilter)
+      );
+
+      if (!isInbound && !isOutbound) {
+        continue;
+      }
+
+      const correspondent = isOutbound ? message.to : message.from;
+      const existing = conversationMap.get(correspondent) || {
+        correspondent,
+        latestMessage: null,
+        unreadCount: 0,
+        messageCount: 0
+      };
+
+      existing.messageCount += 1;
+      if (isInbound && !message.readAt) {
+        existing.unreadCount += 1;
+      }
+      if (!existing.latestMessage || compareMessagesAscending(existing.latestMessage, message) < 0) {
+        existing.latestMessage = message;
+      }
+
+      conversationMap.set(correspondent, existing);
+    }
+
+    const summaries = Array.from(conversationMap.values())
+      .sort((left, right) => compareMessagesDescending(left.latestMessage, right.latestMessage));
+
+    const filteredSummaries = summaries.filter((summary) => isBeforeCursor(summary.latestMessage, beforeCursor));
+    const pageSummaries = filteredSummaries.slice(0, pageSize);
+    const hasMore = filteredSummaries.length > pageSummaries.length;
+    const nextCursor = pageSummaries.length && hasMore ? encodeCursor(pageSummaries[pageSummaries.length - 1].latestMessage) : null;
+
+    sendJson(response, 200, {
+      username: authState.account.username,
+      deviceId: deviceIdFilter || null,
+      limit: pageSize,
+      nextCursor,
+      conversations: pageSummaries.map((summary) => ({
+        correspondent: summary.correspondent,
+        unreadCount: summary.unreadCount,
+        messageCount: summary.messageCount,
+        latestMessage: serializeMessage(summary.latestMessage)
+      }))
     });
   }
 
@@ -305,6 +567,8 @@ function createMessageService(ctx, auth, prekeys) {
 
   return {
     handleAcknowledgeInbox,
+    handleConversations,
+    handleHistory,
     handleInbox,
     handleStoreMessage
   };
