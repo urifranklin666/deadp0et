@@ -6,9 +6,10 @@ import { AuthForm } from "../src/components/auth-form";
 import { AuthScreen } from "../src/components/auth-screen";
 import { MOBILE_DEFAULTS } from "../src/lib/config";
 import { sha256 } from "../src/lib/crypto";
-import { loadLocalDevice, saveSession } from "../src/lib/secure-storage";
+import { loadLocalDevice, loadPreferredApiBase, savePreferredApiBase, saveSession } from "../src/lib/secure-storage";
 import { createMobileApi } from "../src/lib/session";
 import { normalizeUsername } from "@deadp0et/protocol-client";
+import { useEffect } from "react";
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -17,6 +18,16 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadPreferredApiBase()
+      .then((storedApiBase) => {
+        if (storedApiBase) {
+          setApiBase(storedApiBase);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   async function handleLogin() {
     const normalizedUsername = normalizeUsername(username);
@@ -58,6 +69,7 @@ export default function LoginScreen() {
         apiBase,
         session: payload.session
       }));
+      await savePreferredApiBase(apiBase);
       setStatus(`Signed in as ${payload.username} on device ${payload.session.deviceId}.`);
       router.replace("/inbox");
     } catch (error) {
