@@ -3,7 +3,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { encryptForRecipient } from "../src/lib/crypto";
-import { loadComposeDrafts, saveComposeDrafts } from "../src/lib/secure-storage";
+import {
+  loadComposeDrafts,
+  loadConversationCache,
+  saveComposeDrafts,
+  saveConversationCache
+} from "../src/lib/secure-storage";
 import { loadStoredAuthState, createMobileApi } from "../src/lib/session";
 import { assessMobileDeviceTrust, trustCurrentMobileDevice } from "../src/lib/trust";
 import { normalizeUsername } from "@deadp0et/protocol-client";
@@ -35,6 +40,36 @@ type ComposeDraft = {
 
 type ComposeDraftMap = Record<string, ComposeDraft>;
 
+type CachedConversationMessage = {
+  messageId: string;
+  from: string;
+  recipientDeviceId: string;
+  storedAt: string;
+  deliveredAt: string | null;
+  readAt: string | null;
+  deliveryCount: number;
+  envelope?: {
+    protocol?: string;
+    ephemeralKey: JsonWebKey;
+    iv: string;
+    ciphertext: string;
+    oneTimePrekeyId?: string | null;
+  };
+  decryptedPayload?: {
+    subject?: string;
+    body?: string;
+    sentAt?: string;
+    senderDeviceId?: string;
+  } | null;
+  locallyReadAt?: string | null;
+  localOnly?: boolean;
+};
+
+type ConversationCacheState = {
+  selectedConversation?: string | null;
+  messages: Record<string, CachedConversationMessage>;
+};
+
 function normalizeDrafts(raw: string | null): ComposeDraftMap {
   if (!raw) {
     return {};
@@ -45,6 +80,28 @@ function normalizeDrafts(raw: string | null): ComposeDraftMap {
     return parsed || {};
   } catch {
     return {};
+  }
+}
+
+function normalizeConversationCache(raw: string | null): ConversationCacheState {
+  if (!raw) {
+    return {
+      selectedConversation: null,
+      messages: {}
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as ConversationCacheState | null;
+    return {
+      selectedConversation: parsed?.selectedConversation || null,
+      messages: parsed?.messages || {}
+    };
+  } catch {
+    return {
+      selectedConversation: null,
+      messages: {}
+    };
   }
 }
 
@@ -198,6 +255,43 @@ export default function ComposeScreen() {
           ? `Encrypted envelope stored for ${prekeyBundle.username} on ${prekeyBundle.device.deviceId} using one-time prekey ${envelope.oneTimePrekeyId}.`
           : `Encrypted envelope stored for ${prekeyBundle.username} on ${prekeyBundle.device.deviceId}.`
       );
+
+      const rawConversationCache = await loadConversationCache();
+      const conversationCache = normalizeConversationCache(rawConversationCache);
+      const sentAt = new Date().toISOString();
+      const localMessageId = `local-sent:${stored.messageId}`;
+      const nextMessages = {
+        ...(conversationCache.messages || {}),
+        [localMessageId]: {
+          messageId: localMessageId,
+          from: prekeyBundle.username,
+          recipientDeviceId: prekeyBundle.device.deviceId,
+          storedAt: stored.storedAt || sentAt,
+          deliveredAt: sentAt,
+          readAt: sentAt,
+          deliveryCount: 1,
+          envelope: {
+            protocol: envelope.protocol,
+            ephemeralKey: envelope.ephemeralKey,
+            iv: envelope.iv,
+            ciphertext: envelope.ciphertext,
+            oneTimePrekeyId: envelope.oneTimePrekeyId
+          },
+          decryptedPayload: {
+            subject: trimmedSubject,
+            body: trimmedBody,
+            sentAt,
+            senderDeviceId: auth.hydratedDevice.publicBundle.deviceId
+          },
+          locallyReadAt: sentAt,
+          localOnly: true
+        }
+      };
+      await saveConversationCache(JSON.stringify({
+        selectedConversation: prekeyBundle.username,
+        messages: nextMessages
+      }));
+
       const rawDrafts = await loadComposeDrafts();
       const drafts = normalizeDrafts(rawDrafts);
       delete drafts[to];
@@ -205,6 +299,7 @@ export default function ComposeScreen() {
       setPendingTrust(null);
       setSubject("");
       setBody("");
+      router.replace("/inbox");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Unable to send the encrypted envelope.");
     } finally {

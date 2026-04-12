@@ -52,6 +52,7 @@ type CachedConversationMessage = {
   envelope?: InboxMessage["envelope"];
   decryptedPayload?: DecryptedPayload | null;
   locallyReadAt?: string | null;
+  localOnly?: boolean;
 };
 
 type Conversation = {
@@ -440,9 +441,9 @@ export default function InboxScreen() {
                 : "unread";
             return (
               <View key={message.messageId} style={styles.messageBubble}>
-                <Text style={styles.messageFrom}>{message.from}</Text>
+                <Text style={styles.messageFrom}>{message.localOnly ? "You" : message.from}</Text>
                 <Text style={styles.messageMeta}>
-                  {new Date(message.storedAt).toLocaleString()} · {messageState}
+                  {new Date(message.storedAt).toLocaleString()} · {message.localOnly ? "sent locally" : messageState}
                 </Text>
                 {decrypted ? (
                   <>
