@@ -4,7 +4,15 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { consumeLocalOneTimePrekeyRecord } from "@deadp0et/protocol-client";
 
 import { decryptEnvelope } from "../src/lib/crypto";
-import { clearLocalDevice, clearSession, loadLocalDevice, saveLocalDevice } from "../src/lib/secure-storage";
+import {
+  clearConversationCache,
+  clearLocalDevice,
+  clearSession,
+  loadConversationCache,
+  loadLocalDevice,
+  saveConversationCache,
+  saveLocalDevice
+} from "../src/lib/secure-storage";
 import { createMobileApi, loadStoredAuthState, type StoredSessionEnvelope } from "../src/lib/session";
 
 type InboxMessage = {
@@ -31,12 +39,52 @@ type DecryptedPayload = {
   senderDeviceId?: string;
 };
 
+type CachedConversationMessage = {
+  messageId: string;
+  from: string;
+  recipientDeviceId: string;
+  storedAt: string;
+  deliveredAt: string | null;
+  readAt: string | null;
+  deliveryCount: number;
+  envelope?: InboxMessage["envelope"];
+  decryptedPayload?: DecryptedPayload | null;
+  locallyReadAt?: string | null;
+};
+
 type Conversation = {
   correspondent: string;
   latestStoredAt: string;
   unreadCount: number;
-  messages: InboxMessage[];
+  messages: CachedConversationMessage[];
 };
+
+type ConversationCacheState = {
+  selectedConversation?: string | null;
+  messages: Record<string, CachedConversationMessage>;
+};
+
+function normalizeConversationCache(raw: string | null): ConversationCacheState {
+  if (!raw) {
+    return {
+      selectedConversation: null,
+      messages: {}
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as ConversationCacheState | null;
+    return {
+      selectedConversation: parsed?.selectedConversation || null,
+      messages: parsed?.messages || {}
+    };
+  } catch {
+    return {
+      selectedConversation: null,
+      messages: {}
+    };
+  }
+}
 
 export default function InboxScreen() {
   const router = useRouter();
@@ -44,33 +92,65 @@ export default function InboxScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
+  const [cachedMessages, setCachedMessages] = useState<Record<string, CachedConversationMessage>>({});
   const [sessionInfo, setSessionInfo] = useState<StoredSessionEnvelope["session"] | null>(null);
   const [apiBase, setApiBase] = useState("");
   const [username, setUsername] = useState("");
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
-  const [decryptedMessages, setDecryptedMessages] = useState<Record<string, DecryptedPayload>>({});
+
+  const persistConversationCache = useCallback(async (
+    nextMessages: Record<string, CachedConversationMessage>,
+    nextSelectedConversation: string | null
+  ) => {
+    await saveConversationCache(JSON.stringify({
+      selectedConversation: nextSelectedConversation,
+      messages: nextMessages
+    }));
+  }, []);
 
   const restoreAndFetch = useCallback(async () => {
     setLoading(true);
     setStatus("Restoring local mobile session...");
 
     try {
+      const cacheState = normalizeConversationCache(await loadConversationCache());
       const auth = await loadStoredAuthState();
       setApiBase(auth.apiBase);
       setSessionInfo(auth.session);
       setUsername(auth.localDeviceRecord.username || "");
+      setSelectedConversation((current) => current || cacheState.selectedConversation || null);
 
       const api = createMobileApi(auth.apiBase, auth.session.accessToken);
       const payload = await api.getInbox();
+      const liveMessages = Array.isArray(payload.messages) ? payload.messages : [];
+      const mergedMessages: Record<string, CachedConversationMessage> = {
+        ...(cacheState.messages || {})
+      };
 
-      setMessages(Array.isArray(payload.messages) ? payload.messages : []);
+      for (const message of liveMessages) {
+        const existing = mergedMessages[message.messageId];
+        mergedMessages[message.messageId] = {
+          ...existing,
+          ...message,
+          decryptedPayload: existing?.decryptedPayload || null,
+          locallyReadAt: existing?.locallyReadAt || null
+        };
+      }
+
+      setMessages(liveMessages);
+      setCachedMessages(mergedMessages);
+      await persistConversationCache(
+        mergedMessages,
+        selectedConversation || cacheState.selectedConversation || null
+      );
       setStatus(
-        Array.isArray(payload.messages) && payload.messages.length
-          ? `Loaded ${payload.messages.length} encrypted message(s) for ${payload.deviceId}.`
+        liveMessages.length
+          ? `Loaded ${liveMessages.length} encrypted message(s) for ${payload.deviceId}.`
           : `No encrypted messages are queued for ${payload.deviceId}.`
       );
     } catch (error) {
       setMessages([]);
+      setCachedMessages({});
       setSessionInfo(null);
       setUsername("");
       setSelectedConversation(null);
@@ -78,7 +158,7 @@ export default function InboxScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [persistConversationCache, selectedConversation]);
 
   useFocusEffect(
     useCallback(() => {
@@ -95,10 +175,11 @@ export default function InboxScreen() {
   async function handleClearAndExit() {
     await clearSession();
     await clearLocalDevice();
+    await clearConversationCache();
     setMessages([]);
+    setCachedMessages({});
     setSessionInfo(null);
     setUsername("");
-    setDecryptedMessages({});
     setSelectedConversation(null);
     router.replace("/login");
   }
@@ -153,11 +234,19 @@ export default function InboxScreen() {
         }
       }
 
+      const nextCachedMessages = {
+        ...cachedMessages,
+        [message.messageId]: {
+          ...(cachedMessages[message.messageId] || message),
+          ...message,
+          decryptedPayload: decrypted.payload,
+          locallyReadAt: new Date().toISOString(),
+          readAt: new Date().toISOString()
+        }
+      };
+      setCachedMessages(nextCachedMessages);
+      await persistConversationCache(nextCachedMessages, selectedConversation);
       await restoreAndFetch();
-      setDecryptedMessages((current) => ({
-        ...current,
-        [message.messageId]: decrypted.payload
-      }));
       setStatus(
         decrypted.oneTimePrekeyId
           ? `Decrypted ${message.messageId} and acknowledged one-time prekey ${decrypted.oneTimePrekeyId}.`
@@ -169,8 +258,8 @@ export default function InboxScreen() {
   }
 
   const conversations = useMemo<Conversation[]>(() => {
-    const grouped = new Map<string, InboxMessage[]>();
-    for (const message of messages) {
+    const grouped = new Map<string, CachedConversationMessage[]>();
+    for (const message of Object.values(cachedMessages)) {
       const key = message.from || "unknown";
       const bucket = grouped.get(key) || [];
       bucket.push(message);
@@ -185,12 +274,12 @@ export default function InboxScreen() {
         return {
           correspondent,
           latestStoredAt: sortedMessages[0]?.storedAt || "",
-          unreadCount: sortedMessages.filter((message) => !message.readAt).length,
+          unreadCount: sortedMessages.filter((message) => !message.locallyReadAt && !message.readAt).length,
           messages: sortedMessages
         };
       })
       .sort((left, right) => new Date(right.latestStoredAt).getTime() - new Date(left.latestStoredAt).getTime());
-  }, [messages]);
+  }, [cachedMessages]);
 
   const activeConversation = conversations.find((conversation) => conversation.correspondent === selectedConversation)
     || conversations[0]
@@ -237,7 +326,10 @@ export default function InboxScreen() {
           {conversations.map((conversation) => (
             <Pressable
               key={conversation.correspondent}
-              onPress={() => setSelectedConversation(conversation.correspondent)}
+              onPress={() => {
+                setSelectedConversation(conversation.correspondent);
+                persistConversationCache(cachedMessages, conversation.correspondent).catch(() => {});
+              }}
               style={[
                 styles.threadRow,
                 activeConversation?.correspondent === conversation.correspondent ? styles.threadRowActive : null
@@ -274,12 +366,17 @@ export default function InboxScreen() {
           </View>
 
           {activeConversation.messages.map((message) => {
-            const decrypted = decryptedMessages[message.messageId];
+            const decrypted = message.decryptedPayload || null;
+            const messageState = message.readAt
+              ? "acknowledged"
+              : message.locallyReadAt
+                ? "locally read"
+                : "unread";
             return (
               <View key={message.messageId} style={styles.messageBubble}>
                 <Text style={styles.messageFrom}>{message.from}</Text>
                 <Text style={styles.messageMeta}>
-                  {new Date(message.storedAt).toLocaleString()} · {message.readAt ? "acknowledged" : "queued"}
+                  {new Date(message.storedAt).toLocaleString()} · {messageState}
                 </Text>
                 {decrypted ? (
                   <>
