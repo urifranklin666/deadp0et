@@ -582,8 +582,11 @@
         .replaceAll("'", '&#39;');
     }
 
-    function buildThreadState(messages) {
+    function buildThreadState(messages, summaries = []) {
       const threads = new Map();
+      const summaryMap = new Map(
+        (Array.isArray(summaries) ? summaries : []).map((summary) => [summary.correspondent, summary])
+      );
       messages.forEach((message, index) => {
         const currentUsername = String(window.__deadp0etCurrentUsername || '').trim().toLowerCase();
         const from = String(message.from || 'unknown');
@@ -598,6 +601,16 @@
         threads.set(threadKey, existing);
       });
 
+      Array.from(summaryMap.keys()).forEach((threadKey) => {
+        if (!threads.has(threadKey)) {
+          threads.set(threadKey, {
+            key: threadKey,
+            sender: threadKey,
+            messages: []
+          });
+        }
+      });
+
       return Array.from(threads.values())
         .map((thread) => {
           thread.messages.sort((left, right) => {
@@ -605,7 +618,11 @@
             const rightTime = new Date(right.storedAt || 0).getTime();
             return leftTime - rightTime;
           });
-          thread.latest = thread.messages[thread.messages.length - 1];
+          const summary = summaryMap.get(thread.key) || null;
+          thread.summary = summary;
+          thread.latest = thread.messages[thread.messages.length - 1] || summary?.latestMessage || null;
+          thread.unreadCount = summary?.unreadCount ?? thread.messages.filter((message) => !message.localOnly && !message.readAt).length;
+          thread.messageCount = summary?.messageCount ?? thread.messages.length;
           return thread;
         })
         .sort((left, right) => {
@@ -645,31 +662,39 @@
         return;
       }
 
-      let messages;
+      let payload;
       try {
-        messages = JSON.parse(raw);
+        payload = JSON.parse(raw);
       } catch (e) {
         return;
       }
 
-      if (!Array.isArray(messages) || messages.length === 0) {
+      const messages = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.messages)
+          ? payload.messages
+          : [];
+      const conversations = Array.isArray(payload?.conversations) ? payload.conversations : [];
+
+      if ((!Array.isArray(messages) || messages.length === 0) && conversations.length === 0) {
         inboxList.innerHTML = `<div class="inbox-empty-state"><p>Inbox is empty.</p></div>`;
         renderEmptyThreads();
         return;
       }
 
-      const threads = buildThreadState(messages);
+      const threads = buildThreadState(messages, conversations);
       const selectedThread = threads.find((thread) => thread.key === selectedThreadKey) || threads[0];
       selectedThreadKey = selectedThread.key;
       const selectedThreadMessages = selectedThread.messages;
       const selectedMessage =
         selectedThreadMessages.find((message) => message.messageId === selectedMessageId) ||
-        selectedThreadMessages[selectedThreadMessages.length - 1];
+        selectedThreadMessages[selectedThreadMessages.length - 1] ||
+        null;
       setSelectedMessage(selectedMessage?.messageId || '');
 
       threadCountLabel.textContent = `${threads.length} thread${threads.length === 1 ? '' : 's'}`;
       threadViewTitle.textContent = selectedThread.sender;
-      threadMessageCountLabel.textContent = `${selectedThreadMessages.length} item${selectedThreadMessages.length === 1 ? '' : 's'}`;
+      threadMessageCountLabel.textContent = `${selectedThread.messageCount || selectedThreadMessages.length} item${(selectedThread.messageCount || selectedThreadMessages.length) === 1 ? '' : 's'}`;
 
       inboxList.innerHTML = threads.map((thread) => {
         const sender = thread.sender || 'unknown';
@@ -695,10 +720,15 @@
               <span class="inbox-time">${escapeHtml(ts)}</span>
             </div>
             <div class="inbox-preview">${escapeHtml(preview)}</div>
-            <div class="thread-preview-meta">${thread.messages.length} message${thread.messages.length === 1 ? '' : 's'}</div>
+            <div class="thread-preview-meta">${thread.messageCount || thread.messages.length} message${(thread.messageCount || thread.messages.length) === 1 ? '' : 's'}${thread.unreadCount ? ` · ${thread.unreadCount} unread` : ''}</div>
           </div>
         </button>`;
       }).join('');
+
+      if (!selectedThreadMessages.length) {
+        threadView.innerHTML = `<div class="thread-empty-state">No local history is loaded for this thread yet.</div>`;
+        return;
+      }
 
       threadView.innerHTML = selectedThreadMessages.map((message) => {
         const isSelected = message.messageId === selectedMessageId;

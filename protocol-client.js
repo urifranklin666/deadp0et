@@ -321,6 +321,18 @@
       return requestJson(resolveApiBase(), pathname, requestOptions || {});
     }
 
+    function buildQuery(params) {
+      const search = new URLSearchParams();
+      Object.entries(params || {}).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === "") {
+          return;
+        }
+        search.set(key, String(value));
+      });
+      const query = search.toString();
+      return query ? `?${query}` : "";
+    }
+
     return {
       request,
       getHealth() {
@@ -340,6 +352,24 @@
           body: JSON.stringify(payload)
         });
       },
+      listSessions() {
+        return request("/v1/sessions", {
+          method: "GET",
+          headers: buildAuthHeaders()
+        });
+      },
+      revokeCurrentSession() {
+        return request("/v1/sessions/current", {
+          method: "DELETE",
+          headers: buildAuthHeaders()
+        });
+      },
+      revokeSession(sessionId) {
+        return request(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
+          method: "DELETE",
+          headers: buildAuthHeaders()
+        });
+      },
       getBundles(username) {
         return request(`/v1/users/${encodeURIComponent(username)}/bundles`);
       },
@@ -352,6 +382,24 @@
       },
       getInbox() {
         return request("/v1/messages/inbox", {
+          method: "GET",
+          headers: buildAuthHeaders()
+        });
+      },
+      getInboxPage(params) {
+        return request(`/v1/messages/inbox${buildQuery(params || {})}`, {
+          method: "GET",
+          headers: buildAuthHeaders()
+        });
+      },
+      getHistory(params) {
+        return request(`/v1/messages/history${buildQuery(params || {})}`, {
+          method: "GET",
+          headers: buildAuthHeaders()
+        });
+      },
+      listConversations(params) {
+        return request(`/v1/messages/conversations${buildQuery(params || {})}`, {
           method: "GET",
           headers: buildAuthHeaders()
         });
@@ -393,6 +441,25 @@
           method: "POST",
           headers: buildAuthHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify(payload)
+        });
+      },
+      listPushRegistrations() {
+        return request("/v1/push/registrations", {
+          method: "GET",
+          headers: buildAuthHeaders()
+        });
+      },
+      registerPushToken(payload) {
+        return request("/v1/push/register", {
+          method: "POST",
+          headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify(payload)
+        });
+      },
+      revokePushToken(token) {
+        return request(`/v1/push/register/${encodeURIComponent(token)}`, {
+          method: "DELETE",
+          headers: buildAuthHeaders()
         });
       }
     };

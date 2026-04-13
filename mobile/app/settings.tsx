@@ -8,11 +8,15 @@ import {
   clearContactTrust,
   clearLocalDevice,
   clearPreferredApiBase,
+  clearPushToken,
   clearSession,
+  loadPushToken,
   loadPreferredApiBase,
   savePreferredApiBase,
+  savePushToken,
   saveSession
 } from "../src/lib/secure-storage";
+import { getNativePushRegistration } from "../src/lib/notifications";
 import { createMobileApi, loadStoredAuthState } from "../src/lib/session";
 
 export default function SettingsScreen() {
@@ -25,6 +29,7 @@ export default function SettingsScreen() {
   const [deviceId, setDeviceId] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [accountId, setAccountId] = useState("");
+  const [pushTokenPreview, setPushTokenPreview] = useState("");
 
   const loadSettingsState = useCallback(async () => {
     setLoading(true);
@@ -43,11 +48,14 @@ export default function SettingsScreen() {
         setDeviceId(auth.session.deviceId || "");
         setExpiresAt(auth.session.expiresAt || "");
         setAccountId(auth.localDeviceRecord.accountId || "");
+        const storedPushToken = await loadPushToken();
+        setPushTokenPreview(storedPushToken ? `${storedPushToken.slice(0, 18)}...` : "");
       } catch {
         setUsername("");
         setDeviceId("");
         setExpiresAt("");
         setAccountId("");
+        setPushTokenPreview("");
       }
     } finally {
       setLoading(false);
@@ -112,6 +120,17 @@ export default function SettingsScreen() {
     setStatus("Clearing the saved session...");
 
     try {
+      try {
+        const auth = await loadStoredAuthState();
+        const storedPushToken = await loadPushToken();
+        if (storedPushToken) {
+          const api = createMobileApi(auth.apiBase, auth.session.accessToken);
+          await api.revokePushToken(storedPushToken);
+          await clearPushToken();
+        }
+      } catch {
+        // Keep logout resilient even when push unregistration fails.
+      }
       await clearSession();
       setStatus("Saved session cleared. Local device keys are still stored on this phone.");
       router.replace("/login");
@@ -128,19 +147,79 @@ export default function SettingsScreen() {
     setStatus("Clearing all locally stored state...");
 
     try {
+      try {
+        const auth = await loadStoredAuthState();
+        const storedPushToken = await loadPushToken();
+        if (storedPushToken) {
+          const api = createMobileApi(auth.apiBase, auth.session.accessToken);
+          await api.revokePushToken(storedPushToken);
+        }
+      } catch {
+        // Best effort only.
+      }
       await clearSession();
       await clearLocalDevice();
       await clearContactTrust();
       await clearPreferredApiBase();
+      await clearPushToken();
       setApiBase(MOBILE_DEFAULTS.apiBase);
       setUsername("");
       setDeviceId("");
       setExpiresAt("");
       setAccountId("");
+      setPushTokenPreview("");
       setStatus("Cleared session, local device record, trust records, and saved backend URL.");
       router.replace("/login");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Unable to clear local app state.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleRegisterPush() {
+    const actionKey = "register-push";
+    setBusyAction(actionKey);
+    setStatus("Requesting push permission and registering this phone...");
+
+    try {
+      const auth = await loadStoredAuthState();
+      const registration = await getNativePushRegistration();
+      const api = createMobileApi(auth.apiBase, auth.session.accessToken);
+      await api.registerPushToken({
+        token: registration.token,
+        provider: registration.provider,
+        platform: registration.platform,
+        deviceId: auth.session.deviceId
+      });
+      await savePushToken(registration.token);
+      setPushTokenPreview(`${registration.token.slice(0, 18)}...`);
+      setStatus(`Registered ${registration.platform} push token for ${auth.session.deviceId}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Unable to register the push token.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleRemovePush() {
+    const actionKey = "remove-push";
+    setBusyAction(actionKey);
+    setStatus("Removing push registration for this phone...");
+
+    try {
+      const auth = await loadStoredAuthState();
+      const storedPushToken = await loadPushToken();
+      if (!storedPushToken) {
+        throw new Error("No saved push token is registered on this phone.");
+      }
+      const api = createMobileApi(auth.apiBase, auth.session.accessToken);
+      await api.revokePushToken(storedPushToken);
+      await clearPushToken();
+      setPushTokenPreview("");
+      setStatus("Removed the saved push registration for this phone.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Unable to remove the push registration.");
     } finally {
       setBusyAction(null);
     }
@@ -191,11 +270,30 @@ export default function SettingsScreen() {
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Security</Text>
+        <Text style={styles.meta}>Push token: {pushTokenPreview || "not registered"}</Text>
         <Link href="/trust" asChild>
           <Pressable style={styles.secondaryButton}>
             <Text style={styles.secondaryButtonText}>Manage trusted devices</Text>
           </Pressable>
         </Link>
+        <Pressable
+          onPress={() => handleRegisterPush().catch(() => {})}
+          disabled={busyAction === "register-push"}
+          style={styles.secondaryButton}
+        >
+          <Text style={styles.secondaryButtonText}>
+            {busyAction === "register-push" ? "Registering..." : "Register push notifications"}
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => handleRemovePush().catch(() => {})}
+          disabled={busyAction === "remove-push"}
+          style={styles.secondaryButton}
+        >
+          <Text style={styles.secondaryButtonText}>
+            {busyAction === "remove-push" ? "Removing..." : "Remove push registration"}
+          </Text>
+        </Pressable>
         <Pressable
           onPress={() => handleLogout().catch(() => {})}
           disabled={busyAction === "logout"}

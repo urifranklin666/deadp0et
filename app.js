@@ -23,6 +23,7 @@ const state = {
   currentUsername: "",
   lastEnvelope: "",
   inbox: [],
+  conversations: [],
   lookupCache: null,
   devices: []
 };
@@ -177,6 +178,25 @@ function renderLocalDeviceOptions(username = signupUsername.value) {
 function setSummary(node, html, empty = false) {
   node.innerHTML = html;
   node.classList.toggle("empty", empty);
+}
+
+function getConversationKey(message) {
+  const currentUsername = String(state.currentUser?.username || "").trim().toLowerCase();
+  const from = String(message?.from || "unknown");
+  const to = String(message?.to || "");
+  return from.toLowerCase() === currentUsername && to ? to : from;
+}
+
+function isSameMessageContent(left, right) {
+  const leftPayload = left?.decryptedPayload || {};
+  const rightPayload = right?.decryptedPayload || {};
+  return (
+    String(left?.from || "") === String(right?.from || "")
+    && String(left?.to || "") === String(right?.to || "")
+    && String(left?.recipientDeviceId || "") === String(right?.recipientDeviceId || "")
+    && String(leftPayload.subject || "") === String(rightPayload.subject || "")
+    && String(leftPayload.body || "") === String(rightPayload.body || "")
+  );
 }
 
 async function sha256(text) {
@@ -530,9 +550,10 @@ function renderSession() {
   );
 }
 
-function renderInbox(messages = null) {
+function renderInbox(messages = null, conversations = null) {
   if (!state.currentUser) {
     state.inbox = [];
+    state.conversations = [];
     inboxOutput.value = "Sign in to fetch encrypted messages.";
     setSummary(inboxSummary, "No inbox data loaded.", true);
     return [];
@@ -540,6 +561,9 @@ function renderInbox(messages = null) {
 
   if (Array.isArray(messages)) {
     state.inbox = messages;
+  }
+  if (Array.isArray(conversations)) {
+    state.conversations = conversations;
   }
 
   const currentSelectedMessageId = selectedMessageIdInput?.value || "";
@@ -553,7 +577,10 @@ function renderInbox(messages = null) {
   }
 
   inboxOutput.value = state.inbox.length
-    ? JSON.stringify(state.inbox, null, 2)
+    ? JSON.stringify({
+        conversations: state.conversations,
+        messages: state.inbox
+      }, null, 2)
     : "No encrypted envelopes for this device yet.";
 
   if (!state.inbox.length) {
@@ -562,7 +589,8 @@ function renderInbox(messages = null) {
     const latest = state.inbox[state.inbox.length - 1];
     setSummary(
       inboxSummary,
-      `<strong>${state.inbox.length}</strong> message(s) for device <strong>${state.currentUser.session.deviceId}</strong><br>Latest from <strong>${latest.from}</strong>`
+      `<strong>${state.conversations.length}</strong> thread(s) synced for device <strong>${state.currentUser.session.deviceId}</strong><br>` +
+        `Latest activity with <strong>${getConversationKey(latest)}</strong>`
     );
   }
 
@@ -801,15 +829,87 @@ async function fetchInbox() {
   }
 
   refreshInboxButton.disabled = true;
-  setStatus(`Fetching ciphertext inbox for ${state.currentUser.username}...`);
+  setStatus(`Syncing conversations for ${state.currentUser.username}...`);
 
   try {
-    const payload = await api.getInbox();
-    renderInbox(payload.messages || []);
-    setStatus(`Fetched ${payload.messages.length} encrypted message(s) for ${payload.deviceId}.`);
-    return payload.messages || [];
+    const deviceId = state.currentUser.session.deviceId;
+    const conversationPayload = await api.listConversations({
+      limit: 100,
+      deviceId
+    });
+    const conversations = Array.isArray(conversationPayload.conversations)
+      ? conversationPayload.conversations
+      : [];
+    const historyPages = await Promise.all(
+      conversations.map((conversation) => api.getHistory({
+        correspondent: conversation.correspondent,
+        limit: 100,
+        deviceId
+      }))
+    );
+    const historyMessages = historyPages.flatMap((payload) => Array.isArray(payload.messages) ? payload.messages : []);
+    const inboxPayload = await api.getInboxPage({
+      limit: 100,
+      deviceId
+    });
+    const liveMessages = Array.isArray(inboxPayload.messages) ? inboxPayload.messages : [];
+    const mergedMessages = {};
+
+    for (const existing of state.inbox) {
+      if (existing.localOnly) {
+        mergedMessages[existing.messageId] = existing;
+      } else {
+        mergedMessages[existing.messageId] = {
+          ...existing,
+          decryptedPayload: existing.decryptedPayload || null,
+          decryptedAt: existing.decryptedAt || null
+        };
+      }
+    }
+
+    for (const message of historyMessages) {
+      const existing = mergedMessages[message.messageId];
+      mergedMessages[message.messageId] = {
+        ...existing,
+        ...message,
+        decryptedPayload: existing?.decryptedPayload || null,
+        decryptedAt: existing?.decryptedAt || null
+      };
+    }
+
+    for (const message of liveMessages) {
+      const existing = mergedMessages[message.messageId];
+      mergedMessages[message.messageId] = {
+        ...existing,
+        ...message,
+        decryptedPayload: existing?.decryptedPayload || null,
+        decryptedAt: existing?.decryptedAt || null
+      };
+    }
+
+    const liveMessageEntries = Object.values(mergedMessages).filter((entry) => !entry.localOnly);
+    for (const [messageId, message] of Object.entries(mergedMessages)) {
+      if (!message.localOnly || message.deliveryState === "failed") {
+        continue;
+      }
+
+      const replacement = liveMessageEntries.find((entry) => isSameMessageContent(entry, message));
+      if (replacement) {
+        delete mergedMessages[messageId];
+      }
+    }
+
+    const nextMessages = Object.values(mergedMessages).sort((left, right) => {
+      const leftTime = new Date(left.storedAt || 0).getTime();
+      const rightTime = new Date(right.storedAt || 0).getTime();
+      return leftTime - rightTime;
+    });
+
+    renderInbox(nextMessages, conversations);
+    setStatus(`Synced ${conversations.length} conversation(s) and ${liveMessages.length} queued inbox item(s) for ${deviceId}.`);
+    return nextMessages;
   } catch (error) {
-    renderInbox([]);
+    renderInbox([], []);
     setStatus(error.message, "error");
     throw error;
   } finally {

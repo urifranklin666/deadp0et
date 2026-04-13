@@ -44,6 +44,7 @@ type DecryptedPayload = {
 type CachedConversationMessage = {
   messageId: string;
   from: string;
+  to?: string;
   recipientDeviceId: string;
   storedAt: string;
   deliveredAt: string | null;
@@ -61,6 +62,7 @@ type Conversation = {
   correspondent: string;
   latestStoredAt: string;
   unreadCount: number;
+  messageCount: number;
   preview: string;
   hasDraft: boolean;
   draftUpdatedAt: string | null;
@@ -80,6 +82,13 @@ type ComposeDraft = {
 };
 
 type ComposeDraftMap = Record<string, ComposeDraft>;
+
+type ConversationSummary = {
+  correspondent: string;
+  unreadCount: number;
+  messageCount: number;
+  latestMessage: InboxMessage;
+};
 
 function normalizeConversationCache(raw: string | null): ConversationCacheState {
   if (!raw) {
@@ -146,6 +155,7 @@ export default function InboxScreen() {
   const [status, setStatus] = useState<string | null>(null);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [cachedMessages, setCachedMessages] = useState<Record<string, CachedConversationMessage>>({});
+  const [conversationSummaries, setConversationSummaries] = useState<ConversationSummary[]>([]);
   const [sessionInfo, setSessionInfo] = useState<StoredSessionEnvelope["session"] | null>(null);
   const [apiBase, setApiBase] = useState("");
   const [username, setUsername] = useState("");
@@ -162,7 +172,7 @@ export default function InboxScreen() {
     }));
   }, []);
 
-  const restoreAndFetch = useCallback(async () => {
+  const restoreAndFetch = useCallback(async (preferredConversation: string | null = null) => {
     setLoading(true);
     setStatus("Restoring local mobile session...");
 
@@ -173,15 +183,47 @@ export default function InboxScreen() {
       setApiBase(auth.apiBase);
       setSessionInfo(auth.session);
       setUsername(auth.localDeviceRecord.username || "");
-      setSelectedConversation((current) => current || cacheState.selectedConversation || null);
       setComposeDrafts(draftState);
 
       const api = createMobileApi(auth.apiBase, auth.session.accessToken);
-      const payload = await api.getInbox();
-      const liveMessages = Array.isArray(payload.messages) ? payload.messages : [];
+      const conversationPayload = await api.listConversations({
+        limit: 100,
+        deviceId: auth.session.deviceId
+      });
+      const nextConversationSummaries = Array.isArray(conversationPayload.conversations)
+        ? conversationPayload.conversations
+        : [];
+      const nextSelectedConversation = preferredConversation
+        || selectedConversation
+        || cacheState.selectedConversation
+        || nextConversationSummaries[0]?.correspondent
+        || null;
+      const historyPayload = nextSelectedConversation
+        ? await api.getHistory({
+            correspondent: nextSelectedConversation,
+            limit: 100,
+            deviceId: auth.session.deviceId
+          })
+        : { messages: [] };
+      const inboxPayload = await api.getInboxPage({
+        limit: 100,
+        deviceId: auth.session.deviceId
+      });
+      const liveMessages = Array.isArray(inboxPayload.messages) ? inboxPayload.messages : [];
+      const historyMessages = Array.isArray(historyPayload.messages) ? historyPayload.messages : [];
       const mergedMessages: Record<string, CachedConversationMessage> = {
         ...(cacheState.messages || {})
       };
+
+      for (const message of historyMessages) {
+        const existing = mergedMessages[message.messageId];
+        mergedMessages[message.messageId] = {
+          ...existing,
+          ...message,
+          decryptedPayload: existing?.decryptedPayload || null,
+          locallyReadAt: existing?.locallyReadAt || null
+        };
+      }
 
       for (const message of liveMessages) {
         const existing = mergedMessages[message.messageId];
@@ -206,19 +248,19 @@ export default function InboxScreen() {
       }
 
       setMessages(liveMessages);
+      setConversationSummaries(nextConversationSummaries);
       setCachedMessages(mergedMessages);
-      await persistConversationCache(
-        mergedMessages,
-        selectedConversation || cacheState.selectedConversation || null
-      );
+      setSelectedConversation(nextSelectedConversation);
+      await persistConversationCache(mergedMessages, nextSelectedConversation);
       setStatus(
-        liveMessages.length
-          ? `Loaded ${liveMessages.length} encrypted message(s) for ${payload.deviceId}.`
-          : `No encrypted messages are queued for ${payload.deviceId}.`
+        nextConversationSummaries.length
+          ? `Loaded ${nextConversationSummaries.length} conversation(s) and ${liveMessages.length} queued inbox item(s).`
+          : `No encrypted conversations are queued for ${auth.session.deviceId}.`
       );
     } catch (error) {
       setMessages([]);
       setCachedMessages({});
+      setConversationSummaries([]);
       setSessionInfo(null);
       setUsername("");
       setSelectedConversation(null);
@@ -237,7 +279,7 @@ export default function InboxScreen() {
 
   async function handleRefresh() {
     setRefreshing(true);
-    await restoreAndFetch();
+    await restoreAndFetch(selectedConversation);
     setRefreshing(false);
   }
 
@@ -248,6 +290,7 @@ export default function InboxScreen() {
     await clearComposeDrafts();
     setMessages([]);
     setCachedMessages({});
+    setConversationSummaries([]);
     setSessionInfo(null);
     setUsername("");
     setSelectedConversation(null);
@@ -317,7 +360,7 @@ export default function InboxScreen() {
       };
       setCachedMessages(nextCachedMessages);
       await persistConversationCache(nextCachedMessages, selectedConversation);
-      await restoreAndFetch();
+      await restoreAndFetch(selectedConversation);
       setStatus(
         decrypted.oneTimePrekeyId
           ? `Decrypted ${message.messageId} and acknowledged one-time prekey ${decrypted.oneTimePrekeyId}.`
@@ -331,26 +374,46 @@ export default function InboxScreen() {
   const conversations = useMemo<Conversation[]>(() => {
     const grouped = new Map<string, CachedConversationMessage[]>();
     for (const message of Object.values(cachedMessages)) {
-      const key = message.from || "unknown";
+      const key = message.localOnly ? (message.to || "unknown") : (message.from || "unknown");
       const bucket = grouped.get(key) || [];
       bucket.push(message);
       grouped.set(key, bucket);
     }
 
-    return Array.from(grouped.entries())
-      .map(([correspondent, conversationMessages]) => {
+    const summaryMap = new Map(
+      conversationSummaries.map((summary) => [summary.correspondent, summary] as const)
+    );
+    const correspondents = new Set<string>([
+      ...summaryMap.keys(),
+      ...grouped.keys(),
+      ...Object.keys(composeDrafts)
+    ]);
+
+    return Array.from(correspondents)
+      .map((correspondent) => {
+        const conversationMessages = grouped.get(correspondent) || [];
         const sortedMessages = [...conversationMessages].sort(
           (left, right) => new Date(right.storedAt).getTime() - new Date(left.storedAt).getTime()
         );
+        const summary = summaryMap.get(correspondent);
+        const latestMessage = sortedMessages[0] || summary?.latestMessage;
+        const fallbackPreview = latestMessage
+          ? latestMessage.localOnly
+            ? "Sent message"
+            : latestMessage.from === username
+              ? "Outgoing encrypted message"
+              : "Encrypted message waiting to be opened"
+          : "Encrypted message waiting to be opened";
         return {
           correspondent,
-          latestStoredAt: sortedMessages[0]?.storedAt || "",
-          unreadCount: sortedMessages.filter((message) => !message.locallyReadAt && !message.readAt).length,
+          latestStoredAt: latestMessage?.storedAt || "",
+          unreadCount: summary?.unreadCount ?? sortedMessages.filter((message) => !message.localOnly && !message.locallyReadAt && !message.readAt).length,
+          messageCount: summary?.messageCount ?? sortedMessages.length,
           preview: composeDrafts[correspondent]
             ? `Draft: ${composeDrafts[correspondent].body || composeDrafts[correspondent].subject || "Continue writing..."}`
             : sortedMessages[0]?.decryptedPayload?.body
                 || sortedMessages[0]?.decryptedPayload?.subject
-                || "Encrypted message waiting to be opened",
+                || fallbackPreview,
           hasDraft: Boolean(composeDrafts[correspondent]),
           draftUpdatedAt: composeDrafts[correspondent]?.updatedAt || null,
           messages: sortedMessages
@@ -361,7 +424,7 @@ export default function InboxScreen() {
         const rightTime = new Date(right.draftUpdatedAt || right.latestStoredAt).getTime();
         return rightTime - leftTime;
       });
-  }, [cachedMessages, composeDrafts]);
+  }, [cachedMessages, composeDrafts, conversationSummaries, username]);
 
   const activeConversation = conversations.find((conversation) => conversation.correspondent === selectedConversation)
     || conversations[0]
@@ -411,6 +474,7 @@ export default function InboxScreen() {
               onPress={() => {
                 setSelectedConversation(conversation.correspondent);
                 persistConversationCache(cachedMessages, conversation.correspondent).catch(() => {});
+                restoreAndFetch(conversation.correspondent).catch(() => {});
               }}
               style={[
                 styles.threadRow,
@@ -433,7 +497,7 @@ export default function InboxScreen() {
                   {conversation.preview}
                 </Text>
                 <Text style={styles.threadMeta}>
-                  {conversation.messages.length} message(s) · {conversation.unreadCount} unread
+                  {conversation.messageCount} message(s) · {conversation.unreadCount} unread
                 </Text>
               </View>
               <Text style={styles.threadTime}>{formatThreadTimestamp(conversation.draftUpdatedAt || conversation.latestStoredAt)}</Text>
@@ -447,7 +511,7 @@ export default function InboxScreen() {
           <View style={styles.threadHeader}>
             <View>
               <Text style={styles.sectionTitle}>{activeConversation.correspondent}</Text>
-              <Text style={styles.meta}>{activeConversation.messages.length} message(s) in thread</Text>
+              <Text style={styles.meta}>{activeConversation.messageCount} message(s) in thread</Text>
             </View>
             <Pressable
               onPress={() => router.push({ pathname: "/compose", params: { recipient: activeConversation.correspondent } })}
