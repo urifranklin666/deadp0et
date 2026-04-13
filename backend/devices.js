@@ -1,6 +1,6 @@
 const { readJsonBody, sendError, sendJson } = require("./http");
 
-function createDeviceService(ctx, auth, prekeys) {
+function createDeviceService(ctx, auth, prekeys, push) {
   async function handleRegisterDevice(request, response) {
     const authState = auth.requireAuth(request, response);
     if (!authState) {
@@ -80,6 +80,7 @@ function createDeviceService(ctx, auth, prekeys) {
         session.revokedAt = ctx.nowIso();
       }
     });
+    push.removeRegistrationsForDevice(authState.account.accountId, deviceId);
     ctx.repository.saveStore();
 
     sendJson(response, 200, {
@@ -138,6 +139,7 @@ function createDeviceService(ctx, auth, prekeys) {
   }
 
   function handleHealth(response) {
+    const purgedAcknowledgedMessages = Number(ctx.repository.stats.get().purgedAcknowledgedMessages || 0);
     const reconciled = prekeys.reconcilePrekeyReservations();
     if (reconciled) {
       ctx.repository.saveStore();
@@ -162,6 +164,8 @@ function createDeviceService(ctx, auth, prekeys) {
     );
     const releasedPrekeyReservations = ctx.repository.prekeyReservations.count((entry) => entry.releasedAt);
     const expiredMessages = ctx.repository.messages.count((message) => message.expiredAt);
+    const pushRegistrations = ctx.repository.pushRegistrations.count();
+    const queuedNotificationEvents = ctx.repository.notificationEvents.count();
 
     sendJson(response, 200, {
       status: "ok",
@@ -175,7 +179,11 @@ function createDeviceService(ctx, auth, prekeys) {
       releasedPrekeyReservations,
       reservedOneTimePrekeys,
       consumedOneTimePrekeys,
-      expiredMessages
+      expiredMessages,
+      purgedAcknowledgedMessages,
+      acknowledgedMessageRetentionMs: ctx.config.ACKNOWLEDGED_MESSAGE_RETENTION_MS,
+      pushRegistrations,
+      queuedNotificationEvents
     });
   }
 

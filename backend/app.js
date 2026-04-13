@@ -130,6 +130,43 @@ function createRequestHandler(config, service) {
         return;
       }
 
+      if (pathname === "/v1/messages/retention") {
+        if (request.method !== "POST") {
+          methodNotAllowed(response, request.method);
+          return;
+        }
+        service.handleRetentionRun(request, response);
+        return;
+      }
+
+      if (pathname === "/v1/push/registrations") {
+        if (request.method !== "GET") {
+          methodNotAllowed(response, request.method);
+          return;
+        }
+        service.handleListPushRegistrations(request, response);
+        return;
+      }
+
+      if (pathname === "/v1/push/register") {
+        if (request.method !== "POST") {
+          methodNotAllowed(response, request.method);
+          return;
+        }
+        await service.handleRegisterPushToken(request, response);
+        return;
+      }
+
+      if (request.method === "DELETE" && pathname.startsWith("/v1/push/register/")) {
+        const auth = service.requireAuth(request, response);
+        if (!auth) {
+          return;
+        }
+        const token = decodeURIComponent(pathname.slice("/v1/push/register/".length));
+        service.handleDeletePushToken(response, auth, token);
+        return;
+      }
+
       if (pathname === "/v1/messages/inbox/ack") {
         if (request.method !== "POST") {
           methodNotAllowed(response, request.method);

@@ -9,7 +9,13 @@ function defaultStore() {
     accounts: [],
     sessions: [],
     messages: [],
-    prekeyReservations: []
+    prekeyReservations: [],
+    pushRegistrations: [],
+    notificationEvents: [],
+    stats: {
+      purgedAcknowledgedMessages: 0,
+      queuedNotificationEvents: 0
+    }
   };
 }
 
@@ -21,7 +27,13 @@ function loadStore(dataFile) {
       accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [],
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
       messages: Array.isArray(parsed.messages) ? parsed.messages : [],
-      prekeyReservations: Array.isArray(parsed.prekeyReservations) ? parsed.prekeyReservations : []
+      prekeyReservations: Array.isArray(parsed.prekeyReservations) ? parsed.prekeyReservations : [],
+      pushRegistrations: Array.isArray(parsed.pushRegistrations) ? parsed.pushRegistrations : [],
+      notificationEvents: Array.isArray(parsed.notificationEvents) ? parsed.notificationEvents : [],
+      stats: {
+        purgedAcknowledgedMessages: Number(parsed?.stats?.purgedAcknowledgedMessages || 0),
+        queuedNotificationEvents: Number(parsed?.stats?.queuedNotificationEvents || 0)
+      }
     };
   } catch (error) {
     if (error.code === "ENOENT") {
@@ -59,6 +71,11 @@ function createStoreRepository(config) {
       push(item) {
         store[key].push(item);
         return item;
+      },
+      removeWhere(predicate) {
+        const before = store[key].length;
+        store[key] = store[key].filter((item) => !predicate(item));
+        return before - store[key].length;
       }
     };
   }
@@ -66,12 +83,23 @@ function createStoreRepository(config) {
   return {
     accounts: createCollectionRepository("accounts"),
     messages: createCollectionRepository("messages"),
+    notificationEvents: createCollectionRepository("notificationEvents"),
     prekeyReservations: createCollectionRepository("prekeyReservations"),
+    pushRegistrations: createCollectionRepository("pushRegistrations"),
     sessions: createCollectionRepository("sessions"),
     ensureDirectory() {
       ensureDirectory(config.DATA_DIR);
     },
     saveStore,
+    stats: {
+      get() {
+        return store.stats;
+      },
+      increment(field, amount = 1) {
+        store.stats[field] = Number(store.stats[field] || 0) + amount;
+        return store.stats[field];
+      }
+    },
     snapshot() {
       return store;
     }

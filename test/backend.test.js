@@ -1568,6 +1568,334 @@ test("deadp0et exposes paged conversation summaries", async (t) => {
   assert.equal(invalidConversationCursor.status, 400);
 });
 
+test("deadp0et registers and removes push tokens", async (t) => {
+  const { baseUrl } = await startServer(t);
+
+  const create = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-iris-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-1"
+      }
+    })
+  });
+
+  assert.equal(create.status, 201);
+
+  const register = await requestJson(baseUrl, "/v1/push/register", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${create.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      token: "expo-push-token-1",
+      platform: "ios",
+      provider: "expo"
+    })
+  });
+
+  assert.equal(register.status, 201);
+  assert.equal(register.body.registration.deviceId, "device-iris-1");
+  assert.equal(register.body.registration.platform, "ios");
+  assert.equal(register.body.registration.provider, "expo");
+
+  const listed = await requestJson(baseUrl, "/v1/push/registrations", {
+    headers: {
+      Authorization: `Bearer ${create.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(listed.status, 200);
+  assert.equal(listed.body.registrations.length, 1);
+  assert.equal(listed.body.registrations[0].token, "expo-push-token-1");
+
+  const remove = await requestJson(baseUrl, "/v1/push/register/expo-push-token-1", {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${create.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(remove.status, 200);
+  assert.equal(remove.body.removed, 1);
+
+  const afterRemove = await requestJson(baseUrl, "/v1/push/registrations", {
+    headers: {
+      Authorization: `Bearer ${create.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(afterRemove.status, 200);
+  assert.equal(afterRemove.body.registrations.length, 0);
+});
+
+test("deadp0et queues notification events for recipient push registrations and clears them on device revoke", async (t) => {
+  const { baseUrl, dataDir } = await startServer(t);
+
+  const iris = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "iris",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-iris-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-1"
+      }
+    })
+  });
+
+  const noor = await requestJson(baseUrl, "/v1/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "noor",
+      passwordVerifier: "demo-verifier",
+      device: {
+        deviceId: "device-noor-1",
+        identityKey: { kty: "EC", crv: "P-256" },
+        signedPrekey: { kty: "EC", crv: "P-256" },
+        prekeySignature: "sig-2"
+      }
+    })
+  });
+
+  assert.equal(iris.status, 201);
+  assert.equal(noor.status, 201);
+
+  const registerPush = await requestJson(baseUrl, "/v1/push/register", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${noor.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      token: "expo-push-token-noor",
+      platform: "android",
+      provider: "expo"
+    })
+  });
+
+  assert.equal(registerPush.status, 201);
+
+  const prekeyBundle = await requestJson(baseUrl, "/v1/users/noor/prekey-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+
+  assert.equal(prekeyBundle.status, 200);
+
+  const delivered = await requestJson(baseUrl, "/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${iris.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      to: "noor",
+      recipientDeviceId: "device-noor-1",
+      envelope: {
+        protocol: "deadp0et-envelope-v1",
+        ephemeralKey: { kty: "EC", crv: "P-256", x: "push-one" },
+        iv: "push-iv",
+        ciphertext: "push-cipher",
+        prekeyReservationToken: prekeyBundle.body.prekeyReservationToken
+      }
+    })
+  });
+
+  assert.equal(delivered.status, 201);
+
+  const health = await requestJson(baseUrl, "/health");
+  assert.equal(health.status, 200);
+  assert.equal(health.body.pushRegistrations, 1);
+  assert.equal(health.body.queuedNotificationEvents, 1);
+
+  const storeFile = path.join(dataDir, "store.json");
+  const persisted = JSON.parse(fs.readFileSync(storeFile, "utf8"));
+  assert.equal(persisted.pushRegistrations.length, 1);
+  assert.equal(persisted.notificationEvents.length, 1);
+  assert.equal(persisted.notificationEvents[0].type, "new_message_available");
+  assert.equal(persisted.notificationEvents[0].messageId, delivered.body.messageId);
+  assert.equal(persisted.notificationEvents[0].token, "expo-push-token-noor");
+
+  const addDevice = await requestJson(baseUrl, "/v1/devices", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${noor.body.session.accessToken}`
+    },
+    body: JSON.stringify({
+      device: {
+        deviceId: "device-noor-2",
+        identityKey: { kty: "EC", crv: "P-256", x: "identity-two" },
+        signedPrekey: { kty: "EC", crv: "P-256", x: "prekey-two" },
+        prekeySignature: "sig-3"
+      }
+    })
+  });
+
+  assert.equal(addDevice.status, 201);
+
+  const revokePrimary = await requestJson(baseUrl, "/v1/devices/device-noor-1", {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${noor.body.session.accessToken}`
+    }
+  });
+
+  assert.equal(revokePrimary.status, 200);
+
+  const persistedAfterRevoke = JSON.parse(fs.readFileSync(storeFile, "utf8"));
+  assert.equal(persistedAfterRevoke.pushRegistrations.length, 0);
+});
+
+test("deadp0et purges old acknowledged messages by retention policy", async (t) => {
+  const oldReadAt = new Date(Date.now() - 2_000).toISOString();
+  const recentReadAt = new Date().toISOString();
+  const { baseUrl, dataDir } = await startServer(t, {
+    ACKNOWLEDGED_MESSAGE_RETENTION_MS: "1000"
+  }, {
+    accounts: [
+      {
+        accountId: "account-iris",
+        username: "iris",
+        verifier: { salt: "salt", digest: "digest", algorithm: "scrypt" },
+        createdAt: new Date().toISOString(),
+        profile: { joinedAt: new Date().toISOString() },
+        devices: [
+          {
+            deviceId: "device-iris-1",
+            identityKey: { kty: "EC", crv: "P-256" },
+            signedPrekey: { kty: "EC", crv: "P-256" },
+            prekeySignature: "sig-1",
+            oneTimePrekeys: [],
+            registeredAt: new Date().toISOString(),
+            revokedAt: null
+          }
+        ]
+      }
+    ],
+    sessions: [
+      {
+        sessionId: "session-1",
+        accessToken: "token-1",
+        accountId: "account-iris",
+        deviceId: "device-iris-1",
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        revokedAt: null
+      }
+    ],
+    messages: [
+      {
+        messageId: "old-acked",
+        to: "iris",
+        recipientDeviceId: "device-iris-1",
+        from: "noor",
+        senderDeviceId: "device-noor-1",
+        envelope: {
+          protocol: "deadp0et-envelope-v1",
+          ephemeralKey: { kty: "EC", crv: "P-256" },
+          iv: "iv-old",
+          ciphertext: "cipher-old",
+          oneTimePrekeyId: null,
+          prekeyReservationToken: "reservation-old"
+        },
+        storedAt: new Date(Date.now() - 1_000).toISOString(),
+        deliveredAt: new Date(Date.now() - 900).toISOString(),
+        readAt: oldReadAt,
+        deliveryCount: 2
+      },
+      {
+        messageId: "recent-acked",
+        to: "iris",
+        recipientDeviceId: "device-iris-1",
+        from: "rune",
+        senderDeviceId: "device-rune-1",
+        envelope: {
+          protocol: "deadp0et-envelope-v1",
+          ephemeralKey: { kty: "EC", crv: "P-256" },
+          iv: "iv-recent",
+          ciphertext: "cipher-recent",
+          oneTimePrekeyId: null,
+          prekeyReservationToken: "reservation-recent"
+        },
+        storedAt: new Date().toISOString(),
+        deliveredAt: new Date().toISOString(),
+        readAt: recentReadAt,
+        deliveryCount: 1
+      },
+      {
+        messageId: "unread",
+        to: "iris",
+        recipientDeviceId: "device-iris-1",
+        from: "moth",
+        senderDeviceId: "device-moth-1",
+        envelope: {
+          protocol: "deadp0et-envelope-v1",
+          ephemeralKey: { kty: "EC", crv: "P-256" },
+          iv: "iv-unread",
+          ciphertext: "cipher-unread",
+          oneTimePrekeyId: null,
+          prekeyReservationToken: "reservation-unread"
+        },
+        storedAt: new Date().toISOString(),
+        deliveredAt: null,
+        readAt: null,
+        deliveryCount: 0
+      }
+    ],
+    prekeyReservations: [],
+    stats: {
+      purgedAcknowledgedMessages: 0
+    }
+  });
+
+  const runRetention = await requestJson(baseUrl, "/v1/messages/retention", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer token-1"
+    }
+  });
+
+  assert.equal(runRetention.status, 200);
+  assert.equal(runRetention.body.purgedAcknowledgedMessages, 1);
+  assert.equal(runRetention.body.totalPurgedAcknowledgedMessages, 1);
+  assert.equal(runRetention.body.remainingMessages, 2);
+
+  const history = await requestJson(baseUrl, "/v1/messages/history", {
+    headers: {
+      Authorization: "Bearer token-1"
+    }
+  });
+
+  assert.equal(history.status, 200);
+  assert.equal(history.body.messages.some((message) => message.messageId === "old-acked"), false);
+  assert.equal(history.body.messages.some((message) => message.messageId === "recent-acked"), true);
+  assert.equal(history.body.messages.some((message) => message.messageId === "unread"), true);
+
+  const health = await requestJson(baseUrl, "/health");
+  assert.equal(health.status, 200);
+  assert.equal(health.body.purgedAcknowledgedMessages, 1);
+  assert.equal(health.body.acknowledgedMessageRetentionMs, 1000);
+
+  const storeFile = path.join(dataDir, "store.json");
+  const persisted = JSON.parse(fs.readFileSync(storeFile, "utf8"));
+  assert.equal(persisted.messages.some((message) => message.messageId === "old-acked"), false);
+  assert.equal(persisted.stats.purgedAcknowledgedMessages, 1);
+});
+
 test("deadp0et throttles repeated login failures and recovers after block window", async (t) => {
   const { baseUrl } = await startServer(t, {
     AUTH_WINDOW_MS: "60000",

@@ -1,8 +1,33 @@
 const { parseUrl, readJsonBody, sendError, sendJson } = require("./http");
 
-function createMessageService(ctx, auth, prekeys) {
+function createMessageService(ctx, auth, prekeys, push) {
   const DEFAULT_PAGE_SIZE = 50;
   const MAX_PAGE_SIZE = 100;
+
+  function reconcileAcknowledgedMessageRetention() {
+    if (ctx.config.ACKNOWLEDGED_MESSAGE_RETENTION_MS <= 0) {
+      return 0;
+    }
+
+    const cutoffMs = Date.now() - ctx.config.ACKNOWLEDGED_MESSAGE_RETENTION_MS;
+    const purged = ctx.repository.messages.removeWhere((message) => {
+      if (!message.readAt) {
+        return false;
+      }
+      const readAtMs = Date.parse(message.readAt);
+      if (!Number.isFinite(readAtMs)) {
+        return false;
+      }
+      return readAtMs <= cutoffMs;
+    });
+
+    if (purged > 0) {
+      ctx.repository.stats.increment("purgedAcknowledgedMessages", purged);
+      ctx.repository.saveStore();
+    }
+
+    return purged;
+  }
 
   function serializeMessage(message) {
     return {
@@ -188,6 +213,10 @@ function createMessageService(ctx, auth, prekeys) {
 
     ctx.repository.messages.push(message);
     reservation.deliveredMessageId = message.messageId;
+    push.queueMessageNotifications({
+      ...message,
+      recipientAccountId: recipient.accountId
+    });
     ctx.repository.saveStore();
 
     sendJson(response, 201, {
@@ -199,6 +228,7 @@ function createMessageService(ctx, auth, prekeys) {
   }
 
   function handleInbox(request, response) {
+    reconcileAcknowledgedMessageRetention();
     const reconciled = prekeys.reconcilePrekeyReservations();
     if (reconciled) {
       ctx.repository.saveStore();
@@ -273,6 +303,7 @@ function createMessageService(ctx, auth, prekeys) {
   }
 
   function handleHistory(request, response) {
+    reconcileAcknowledgedMessageRetention();
     const reconciled = prekeys.reconcilePrekeyReservations();
     if (reconciled) {
       ctx.repository.saveStore();
@@ -345,6 +376,7 @@ function createMessageService(ctx, auth, prekeys) {
   }
 
   function handleConversations(request, response) {
+    reconcileAcknowledgedMessageRetention();
     const reconciled = prekeys.reconcilePrekeyReservations();
     if (reconciled) {
       ctx.repository.saveStore();
@@ -427,6 +459,22 @@ function createMessageService(ctx, auth, prekeys) {
         messageCount: summary.messageCount,
         latestMessage: serializeMessage(summary.latestMessage)
       }))
+    });
+  }
+
+  function handleRetentionRun(request, response) {
+    const authState = auth.requireAuth(request, response);
+    if (!authState) {
+      return;
+    }
+
+    const purged = reconcileAcknowledgedMessageRetention();
+    sendJson(response, 200, {
+      username: authState.account.username,
+      retentionMs: ctx.config.ACKNOWLEDGED_MESSAGE_RETENTION_MS,
+      purgedAcknowledgedMessages: purged,
+      totalPurgedAcknowledgedMessages: Number(ctx.repository.stats.get().purgedAcknowledgedMessages || 0),
+      remainingMessages: ctx.repository.messages.count()
     });
   }
 
@@ -570,6 +618,7 @@ function createMessageService(ctx, auth, prekeys) {
     handleConversations,
     handleHistory,
     handleInbox,
+    handleRetentionRun,
     handleStoreMessage
   };
 }

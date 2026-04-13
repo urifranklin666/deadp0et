@@ -14,6 +14,9 @@ module.exports = {
   AUTH_MAX_ATTEMPTS_PER_KEY: Math.max(1, Number(process.env.AUTH_MAX_ATTEMPTS_PER_KEY || 8)),
   AUTH_BLOCK_MS: Math.max(1000, Number(process.env.AUTH_BLOCK_MS || 15 * 60 * 1000)),
   PREKEY_RESERVATION_TTL_MS: Math.max(1000, Number(process.env.PREKEY_RESERVATION_TTL_MS || 10 * 60 * 1000)),
+  ACKNOWLEDGED_MESSAGE_RETENTION_MS: Math.max(0, Number(
+    process.env.ACKNOWLEDGED_MESSAGE_RETENTION_MS || 30 * 24 * 60 * 60 * 1000
+  )),
   LOW_ONE_TIME_PREKEY_THRESHOLD: Math.max(1, Number(process.env.LOW_ONE_TIME_PREKEY_THRESHOLD || 5)),
   DATA_DIR,
   DATA_FILE: path.join(DATA_DIR, "store.json"),
