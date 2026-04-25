@@ -3,803 +3,212 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>deadp0et | secure messaging</title>
-  <link rel="icon" type="image/svg+xml" href="/logo.svg" />
-  <link rel="stylesheet" href="./styles.css">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>deadp0et | encrypted messenger</title>
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 
-  <!-- Animated background -->
-  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-grid"      aria-hidden="true"></div>
   <div class="bg-scanlines" aria-hidden="true"></div>
+  <div class="vignette"     aria-hidden="true"></div>
 
-  <!-- App shell -->
   <div class="app-shell">
 
-    <!-- Fixed header -->
+    <!-- ── Header ─────────────────────────────────────────── -->
     <header class="app-header">
       <div class="app-header-inner">
         <div class="logo-mark" aria-hidden="true">
-          <svg width="26" height="28" viewBox="0 0 26 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <!-- Shield -->
+          <div class="logo-ring lr-1"></div>
+          <div class="logo-ring lr-2"></div>
+          <svg width="22" height="24" viewBox="0 0 26 28" fill="none">
             <path d="M13 1.5L24 6.5V15c0 6-4.8 10.5-11 12C6.8 25.5 2 21 2 15V6.5L13 1.5z"
                   stroke="#cc0000" stroke-width="1.4" stroke-linejoin="round" fill="rgba(204,0,0,0.07)"/>
-            <!-- Lock body -->
             <rect x="8.5" y="14.5" width="9" height="7" rx="1.8" stroke="#cc0000" stroke-width="1.3" fill="rgba(204,0,0,0.15)"/>
-            <!-- Lock shackle -->
             <path d="M10.5 14.5v-2a2.5 2.5 0 0 1 5 0v2" stroke="#cc0000" stroke-width="1.3" stroke-linecap="round"/>
-            <!-- Keyhole -->
             <circle cx="13" cy="18" r="1.1" fill="#cc0000"/>
             <path d="M13 18.8v1.5" stroke="#cc0000" stroke-width="1" stroke-linecap="round"/>
           </svg>
         </div>
         <div class="app-brand">
           <span class="app-title">dead<span class="app-title-p0">p0</span>et</span>
-          <span class="app-brand-line">private delivery for every device you trust</span>
+          <span class="app-brand-line">encrypted messenger</span>
         </div>
-        <span class="app-subtitle">e2e encrypted</span>
+        <div class="header-status">
+          <span class="status-dot" id="status-dot"></span>
+          <span class="header-badge" id="header-badge">e2e encrypted</span>
+        </div>
       </div>
     </header>
 
-    <!-- Scrollable content area -->
-    <main class="app-content">
+    <!-- ════════════════════════════════
+         SCREEN: auth
+         ════════════════════════════════ -->
+    <section class="screen" id="screen-auth">
+      <div class="screen-scroll">
 
-      <!-- ====== MESSAGES TAB ====== -->
-      <section class="tab-panel active" id="tab-messages" role="tabpanel">
-
-        <div class="hero-panel">
-          <div class="hero-copy">
-            <div class="hero-kicker">Secure Messaging</div>
-            <h1 class="hero-title">A dark-room messenger built around device trust.</h1>
-            <p class="hero-text">
-              Keep identity keys local, route ciphertext through the backend, and manage delivery one
-              device at a time.
-            </p>
-          </div>
-          <div class="hero-chip-row" aria-label="Core properties">
-            <span class="hero-chip">local private keys</span>
-            <span class="hero-chip">device-bound inbox</span>
-            <span class="hero-chip">ciphertext only</span>
-          </div>
-          <div class="hero-actions">
-            <button class="btn-primary btn-sm tab-jump-button" data-target-tab="account">Open Account</button>
-            <button class="btn-secondary btn-sm tab-jump-button" data-target-tab="devices">Manage Devices</button>
-          </div>
-        </div>
-
-        <div class="quick-glance-grid" aria-label="Workflow highlights">
-          <div class="glance-card">
-            <span class="glance-label">Flow</span>
-            <strong>Sign in, pull a bundle, send locally encrypted messages.</strong>
-          </div>
-          <div class="glance-card">
-            <span class="glance-label">Trust</span>
-            <strong>Fingerprint changes are visible before you keep talking.</strong>
-          </div>
-        </div>
-
-        <!-- Inbox -->
-        <div class="section-label">Inbox</div>
-        <div class="surface-card">
-          <div id="inbox-summary" class="summary-pill empty">No inbox data loaded.</div>
-
-          <div class="thread-browser" id="thread-browser">
-            <div class="thread-column">
-              <div class="thread-column-header">
-                <span>Conversations</span>
-                <span class="thread-column-meta" id="thread-count-label">0 threads</span>
-              </div>
-              <div class="inbox-list" id="inbox-list-rendered">
-                <div class="inbox-empty-state">
-                  <div class="inbox-empty-icon" aria-hidden="true">
-                    <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-                      <rect x="4" y="10" width="32" height="22" rx="3" stroke="#4a1a1a" stroke-width="1.5"/>
-                      <path d="M4 14l16 11 16-11" stroke="#4a1a1a" stroke-width="1.5"/>
-                    </svg>
-                  </div>
-                  <p>No messages yet.<br>Refresh inbox or send one.</p>
-                </div>
-              </div>
-            </div>
-            <div class="thread-column thread-column-messages">
-              <div class="thread-column-header">
-                <span id="thread-view-title">Thread</span>
-                <span class="thread-column-meta" id="thread-message-count-label">No selection</span>
-              </div>
-              <div class="thread-view" id="thread-view-rendered">
-                <div class="thread-empty-state">Select a conversation to inspect its encrypted envelopes.</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Decrypted message detail (hidden until a message is decrypted) -->
-        <div class="message-detail" id="message-detail" style="display:none">
-          <div class="message-detail-header">
-            <button class="icon-btn" id="close-detail-btn" aria-label="Back to inbox">
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <path d="M11 4L6 9l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-            <span class="message-detail-title">Decrypted Message</span>
-          </div>
-          <div id="plaintext-summary" class="plaintext-card empty">No message decrypted yet.</div>
-        </div>
-
-        <!-- Compose card -->
-        <div class="section-label" style="margin-top:20px">Compose</div>
-        <div class="compose-card feature-card">
-          <div class="card-eyebrow">Outgoing envelope</div>
-          <div class="field-group">
-            <label for="recipient-username" class="field-label">To</label>
-            <input id="recipient-username" type="text" class="field-input" placeholder="recipient username">
-          </div>
-          <div class="field-group">
-            <label for="message-subject" class="field-label">Subject</label>
-            <input id="message-subject" type="text" class="field-input" placeholder="subject line">
-          </div>
-          <div class="field-group">
-            <label for="message-body" class="field-label">Message</label>
-            <textarea id="message-body" class="field-textarea" rows="5" placeholder="Write your message. The backend receives only routing metadata and ciphertext."></textarea>
-          </div>
-
-          <div id="envelope-summary" class="summary-pill empty" style="margin-bottom:12px">No envelope sent yet.</div>
-
-          <div class="compose-actions">
-            <button id="send-button" class="btn-primary">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M14 2L2 7l5 3 2 5 5-13z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-              </svg>
-              Encrypt &amp; Send
-            </button>
-            <button id="copy-envelope-button" class="btn-ghost" disabled>
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
-                <path d="M11 5V3.5A1.5 1.5 0 009.5 2h-7A1.5 1.5 0 001 3.5v7A1.5 1.5 0 002.5 12H4" stroke="currentColor" stroke-width="1.4"/>
-              </svg>
-              Copy Envelope
-            </button>
-          </div>
-        </div>
-
-        <!-- Bundle lookup (hidden utility — needed by JS) -->
-        <div class="section-label" style="margin-top:20px">Bundle Lookup</div>
-        <div class="compose-card utility-card">
-          <p class="card-note">Pull the latest public device bundle before encrypting to a recipient.</p>
-          <div class="field-row">
-            <input id="lookup-username" type="text" class="field-input" placeholder="username to look up">
-            <button id="lookup-button" class="btn-secondary btn-sm">Fetch</button>
-          </div>
-          <div id="bundle-summary" class="summary-pill empty" style="margin-top:10px">No recipient bundle loaded.</div>
-        </div>
-
-        <!-- Inbox action buttons -->
-        <div class="inbox-actions">
-          <button id="refresh-inbox-button" class="btn-secondary">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M13.5 8A5.5 5.5 0 102.5 11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-              <path d="M1 14l1.5-2.5L5 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            Refresh Inbox
-          </button>
-          <button id="decrypt-selected-button" class="btn-primary">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
-              <path d="M5.5 7V5a2.5 2.5 0 015 0v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-            </svg>
-            Decrypt Selected
-          </button>
-        </div>
-
-        <!-- Hidden textareas JS writes to -->
-        <textarea id="inbox-output" style="display:none" readonly></textarea>
-        <textarea id="envelope-output" style="display:none" readonly></textarea>
-        <textarea id="plaintext-output" style="display:none" readonly></textarea>
-        <textarea id="directory-output" style="display:none" readonly></textarea>
-        <input id="selected-message-id" type="hidden" value="">
-
-      </section>
-
-      <!-- ====== ACCOUNT TAB ====== -->
-      <section class="tab-panel" id="tab-account" role="tabpanel">
-
-        <!-- Session / profile card (shown when logged in) -->
-        <div id="session-summary" class="profile-card empty">
-          <div class="profile-avatar" aria-hidden="true">
-            <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-              <circle cx="14" cy="10" r="5" stroke="#444" stroke-width="1.5"/>
-              <path d="M4 24c0-5.523 4.477-10 10-10s10 4.477 10 10" stroke="#444" stroke-width="1.5" stroke-linecap="round"/>
+        <div class="hero-block">
+          <div class="hero-logo-wrap" aria-hidden="true">
+            <div class="hero-ring hero-ring-1"></div>
+            <div class="hero-ring hero-ring-2"></div>
+            <svg width="48" height="52" viewBox="0 0 26 28" fill="none">
+              <path d="M13 1.5L24 6.5V15c0 6-4.8 10.5-11 12C6.8 25.5 2 21 2 15V6.5L13 1.5z"
+                    stroke="#cc0000" stroke-width="1.2" stroke-linejoin="round" fill="rgba(204,0,0,0.08)"/>
+              <rect x="8.5" y="14.5" width="9" height="7" rx="1.8" stroke="#cc0000" stroke-width="1.2" fill="rgba(204,0,0,0.14)"/>
+              <path d="M10.5 14.5v-2a2.5 2.5 0 0 1 5 0v2" stroke="#cc0000" stroke-width="1.2" stroke-linecap="round"/>
+              <circle cx="13" cy="18" r="1.1" fill="#cc0000"/>
+              <path d="M13 18.8v1.5" stroke="#cc0000" stroke-width="1" stroke-linecap="round"/>
             </svg>
           </div>
-          <div class="profile-info">
-            <span class="profile-name">Not signed in</span>
-            <span class="profile-detail">Create an account or sign in below</span>
-          </div>
+          <h1 class="hero-wordmark">dead<span class="hero-p0">p0</span>et</h1>
+          <p class="hero-sub">end-to-end encrypted &bull; zero plaintext</p>
         </div>
 
-        <!-- Auth form -->
         <div class="auth-card">
-          <div class="card-eyebrow">Identity</div>
-          <div class="section-label">Sign In / Create Account</div>
-          <div class="field-group">
-            <label for="signup-username" class="field-label">Username</label>
-            <input id="signup-username" type="text" class="field-input" placeholder="iris" autocomplete="username">
-          </div>
-          <div class="field-group">
-            <label for="signup-password" class="field-label">Password</label>
-            <input id="signup-password" type="password" class="field-input" placeholder="passphrase" autocomplete="current-password">
-          </div>
-          <div class="field-group">
-            <label for="local-device-select" class="field-label">Local Device</label>
-            <select id="local-device-select" class="field-input field-select">
-              <option value="">Use the first local device for this account</option>
-            </select>
+          <div class="auth-card-corner" aria-hidden="true"></div>
+
+          <div class="auth-tabs">
+            <button class="auth-tab active" id="auth-toggle-login">Sign In</button>
+            <button class="auth-tab"        id="auth-toggle-register">Register</button>
           </div>
 
-          <div class="auth-actions">
-            <button id="signup-button" class="btn-primary">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <circle cx="8" cy="6" r="3" stroke="currentColor" stroke-width="1.4"/>
-                <path d="M2 13.5c0-3.314 2.686-6 6-6s6 2.686 6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-                <path d="M12 1v4M10 3h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-              </svg>
-              Create Account
-            </button>
-            <button id="login-button" class="btn-secondary">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M10 2h2.5A1.5 1.5 0 0114 3.5v9A1.5 1.5 0 0112.5 14H10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-                <path d="M7 11l3-3-3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-                <line x1="10" y1="8" x2="2" y2="8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-              </svg>
-              Sign In
-            </button>
+          <div class="auth-fields">
+            <label class="field-label" for="auth-username">Username</label>
+            <input id="auth-username" class="field-input" type="text"
+              autocomplete="username" autocorrect="off" autocapitalize="off"
+              spellcheck="false" placeholder="deadplug">
+
+            <label class="field-label" for="auth-password">Password</label>
+            <input id="auth-password" class="field-input" type="password"
+              autocomplete="current-password" placeholder="••••••••">
           </div>
 
-          <button id="bootstrap-button" class="btn-text-link">
-            Load demo users (iris &amp; noor)
+          <p class="auth-error" id="auth-error" hidden></p>
+          <button class="btn-primary btn-block" id="btn-auth-submit">Sign In</button>
+
+          <p class="auth-note">
+            Keys are generated in your browser. Your password wraps your private key —
+            the server never sees plaintext.
+          </p>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════
+         SCREEN: unlock (session restore)
+         ════════════════════════════════ -->
+    <section class="screen" id="screen-unlock">
+      <div class="screen-scroll screen-centered">
+        <div class="unlock-icon" aria-hidden="true">
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+            <circle cx="24" cy="24" r="22" stroke="#cc0000" stroke-width="1.2" fill="rgba(204,0,0,0.05)"/>
+            <rect x="14" y="24" width="20" height="14" rx="3" stroke="#cc0000" stroke-width="1.3" fill="rgba(204,0,0,0.1)"/>
+            <path d="M18 24v-6a6 6 0 0 1 12 0v6" stroke="#cc0000" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h2 class="unlock-title">Welcome back, <span id="unlock-username"></span></h2>
+        <p class="unlock-sub">Enter your password to decrypt your keys.</p>
+        <input id="unlock-password" class="field-input unlock-input" type="password"
+          autocomplete="current-password" placeholder="Password">
+        <p class="auth-error" id="unlock-error" hidden></p>
+        <button class="btn-primary btn-block" id="btn-unlock">Unlock</button>
+        <button class="btn-ghost btn-block" id="btn-unlock-logout">Sign in as someone else</button>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════
+         SCREEN: home (conversations)
+         ════════════════════════════════ -->
+    <section class="screen screen-home" id="screen-home">
+
+      <div class="home-toolbar">
+        <span class="home-title">Messages</span>
+        <div class="home-toolbar-right">
+          <button class="btn-ghost btn-sm" id="btn-new-chat" aria-label="New conversation">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            New
+          </button>
+          <button class="btn-ghost btn-sm" id="btn-logout" aria-label="Logout">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+              <path d="M10 7.5H2m0 0 3-3M2 7.5l3 3M6 4V2h7v11H6v-2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
           </button>
         </div>
+      </div>
 
-        <!-- Hidden session output -->
-        <textarea id="session-output" style="display:none" readonly></textarea>
+      <div class="conv-list" id="conv-list" role="list"></div>
 
-      </section>
+    </section>
 
-      <!-- ====== DEVICES TAB ====== -->
-      <section class="tab-panel" id="tab-devices" role="tabpanel">
+    <!-- ════════════════════════════════
+         SCREEN: chat
+         ════════════════════════════════ -->
+    <section class="screen screen-chat" id="screen-chat">
 
-        <div class="section-label">Devices</div>
-        <div class="surface-card">
-          <div class="card-eyebrow">Key inventory</div>
-          <div id="devices-summary" class="summary-pill empty">No device data loaded.</div>
-
-          <div class="device-actions-row">
-            <button id="refresh-devices-button" class="btn-secondary btn-sm">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M13.5 8A5.5 5.5 0 102.5 11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                <path d="M1 14l1.5-2.5L5 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              Refresh
-            </button>
-            <button id="add-device-button" class="btn-primary btn-sm">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
-                <path d="M8 6v4M6 8h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-              </svg>
-              Add This Browser
-            </button>
-          </div>
+      <div class="chat-header">
+        <button class="btn-ghost btn-sm" id="btn-back" aria-label="Back">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+            <path d="M11 4l-5 5 5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <div class="chat-peer-info">
+          <span class="chat-peer-name" id="chat-peer-name"></span>
+          <span class="chat-peer-sub">end-to-end encrypted</span>
         </div>
+      </div>
 
-        <!-- Device action controls -->
-        <div class="compose-card" style="margin-top:16px">
-          <div class="card-eyebrow">Maintenance</div>
-          <div class="section-label" style="margin-bottom:12px">Device Action</div>
-          <div class="field-group">
-            <label for="device-action-id" class="field-label">Device ID</label>
-            <input id="device-action-id" type="text" class="field-input" placeholder="device-iris-2">
-          </div>
-          <div class="field-group">
-            <label for="device-action-mode" class="field-label">Action</label>
-            <select id="device-action-mode" class="field-input field-select">
-              <option value="rotate">Rotate prekeys</option>
-              <option value="revoke">Revoke device</option>
-            </select>
-          </div>
-          <button id="apply-device-action-button" class="btn-secondary" style="margin-top:12px; width:100%">
-            Apply Action
-          </button>
-        </div>
+      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite"></div>
 
-        <!-- Portability -->
-        <div class="section-label" style="margin-top:20px">Device Portability</div>
-        <div class="compose-card">
-          <p class="card-note">Export a local device record or import one to move the browser client between machines.</p>
-          <div id="device-portability-summary" class="summary-pill empty" style="margin-bottom:12px">No local device note yet.</div>
-          <div class="field-row" style="gap:8px">
-            <button id="export-device-button" class="btn-secondary btn-sm" style="flex:1">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M8 1v9M5 7l3 3 3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M2 12v1.5A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-              </svg>
-              Export
-            </button>
-            <button id="import-device-button" class="btn-secondary btn-sm" style="flex:1">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M8 15V6M5 9l3-3 3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M2 12v1.5A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-              </svg>
-              Import
-            </button>
-          </div>
-          <div class="field-group" style="margin-top:12px">
-            <label for="device-portability-output" class="field-label">Portability Payload</label>
-            <textarea id="device-portability-output" class="field-textarea" rows="5" placeholder="Exported device JSON appears here. Paste a record to import it."></textarea>
-          </div>
-        </div>
+      <!-- Media preview bar -->
+      <div class="media-preview-wrap" id="media-preview-wrap" hidden>
+        <div class="media-preview" id="media-preview"></div>
+        <button class="btn-ghost btn-sm" id="btn-media-cancel" aria-label="Remove attachment">&times;</button>
+      </div>
 
-        <!-- Hidden devices output -->
-        <textarea id="devices-output" style="display:none" readonly></textarea>
+      <div class="chat-input-area">
+        <button class="btn-attach" id="btn-attach" aria-label="Attach file" title="Attach file">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+            <path d="M15.5 8.5l-7.5 7.5a5 5 0 0 1-7-7l8-8a3.33 3.33 0 0 1 4.7 4.7l-7.5 7.5A1.67 1.67 0 1 1 3.8 10.8l7-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <input id="file-input" type="file" hidden accept="image/*,video/*,application/pdf,.zip,.txt,.doc,.docx">
+        <textarea id="chat-input" class="chat-textarea" rows="1"
+          placeholder="Message…" aria-label="Message input"
+          autocomplete="off" autocorrect="off" spellcheck="true"></textarea>
+        <button class="btn-send-msg" id="btn-send" aria-label="Send">
+          <svg width="17" height="17" viewBox="0 0 17 17" fill="none" aria-hidden="true">
+            <path d="M1.5 8.5h14M8.5 1.5l7 7-7 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
 
-      </section>
+    </section>
 
-      <!-- ====== SETTINGS TAB ====== -->
-      <section class="tab-panel" id="tab-settings" role="tabpanel">
+  </div><!-- /app-shell -->
 
-        <div class="section-label">Backend Endpoint</div>
-        <div class="compose-card">
-          <div class="card-eyebrow">Runtime</div>
-          <div class="field-group">
-            <label for="api-base" class="field-label">API Base URL</label>
-            <input id="api-base" type="text" class="field-input" placeholder="https://deadp0et.deadplug.digital">
-          </div>
-          <div class="settings-actions">
-            <button id="save-api-button" class="btn-primary btn-sm">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M13 2H5L2 5v8.5A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V3.5A1.5 1.5 0 0013 2z" stroke="currentColor" stroke-width="1.4"/>
-                <rect x="5" y="2" width="6" height="4" rx="0.5" stroke="currentColor" stroke-width="1.4"/>
-                <rect x="4" y="9" width="8" height="5" rx="0.5" stroke="currentColor" stroke-width="1.4"/>
-              </svg>
-              Save
-            </button>
-            <button id="health-button" class="btn-secondary btn-sm">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M2 8h3l2-5 3 9 2-4h2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              Check Health
-            </button>
-          </div>
-        </div>
-
-        <div class="section-label" style="margin-top:20px">Backend Status</div>
-        <div id="health-summary" class="health-card empty">No health check has been run yet.</div>
-
-        <!-- About section -->
-        <div class="section-label" style="margin-top:20px">Runtime Notes</div>
-        <div class="notes-grid">
-          <div class="note-card">
-            <div class="note-icon" aria-hidden="true">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="#cc0000" stroke-width="1.4"/>
-                <path d="M5.5 7V5a2.5 2.5 0 015 0v2" stroke="#cc0000" stroke-width="1.4" stroke-linecap="round"/>
-              </svg>
-            </div>
-            <h4>Local-only secrets</h4>
-            <p>Device private keys stay in your browser. The server never sees them.</p>
-          </div>
-          <div class="note-card">
-            <div class="note-icon" aria-hidden="true">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <circle cx="8" cy="8" r="6" stroke="#cc0000" stroke-width="1.4"/>
-                <path d="M8 5v3l2 2" stroke="#cc0000" stroke-width="1.4" stroke-linecap="round"/>
-              </svg>
-            </div>
-            <h4>Verifier flow</h4>
-            <p>A SHA-256 verifier is used — not production-grade PAKE/Argon2id yet.</p>
-          </div>
-          <div class="note-card">
-            <div class="note-icon" aria-hidden="true">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="#cc0000" stroke-width="1.4"/>
-                <path d="M8 7v4M6 9h4" stroke="#cc0000" stroke-width="1.4" stroke-linecap="round"/>
-              </svg>
-            </div>
-            <h4>Device-scoped inbox</h4>
-            <p>Inbox requests are bound to the authenticated device for per-device delivery.</p>
-          </div>
-          <div class="note-card">
-            <div class="note-icon" aria-hidden="true">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M8 2L2 5v4c0 3 2.5 5.5 6 6 3.5-.5 6-3 6-6V5L8 2z" stroke="#cc0000" stroke-width="1.4" stroke-linejoin="round"/>
-              </svg>
-            </div>
-            <h4>Current gap</h4>
-            <p>A browser without local private keys can auth but cannot decrypt old messages.</p>
-          </div>
-        </div>
-
-        <!-- Hidden health output -->
-        <textarea id="health-output" style="display:none" readonly></textarea>
-
-      </section>
-
-    </main>
-
-    <!-- Status / toast bar -->
-    <div class="status-bar" id="status-bar" aria-live="polite">
-      <p id="status" class="status-text">Backend endpoint ready. Create or sign in to an account.</p>
+  <!-- ════════════════════════════════
+       MODAL: new chat
+       ════════════════════════════════ -->
+  <div class="modal-overlay" id="modal-new-chat" hidden role="dialog" aria-modal="true" aria-label="New conversation">
+    <div class="modal-box">
+      <div class="modal-box-corner" aria-hidden="true"></div>
+      <div class="modal-header">
+        <span class="modal-title">New Conversation</span>
+        <button class="btn-ghost btn-sm" id="btn-modal-close" aria-label="Close">&times;</button>
+      </div>
+      <label class="field-label" for="new-chat-input">Search by username</label>
+      <input id="new-chat-input" class="field-input" type="text"
+        autocomplete="off" autocorrect="off" autocapitalize="off"
+        spellcheck="false" placeholder="username">
+      <p class="auth-error" id="search-error" hidden></p>
+      <button class="btn-primary btn-block mt-12" id="btn-modal-start">Open Chat</button>
     </div>
-
-    <!-- Bottom nav -->
-    <nav class="bottom-nav" role="navigation" aria-label="Main navigation">
-      <button class="nav-tab active" data-tab="messages" aria-label="Messages" aria-selected="true">
-        <div class="nav-icon" aria-hidden="true">
-          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-            <path d="M3 4h16a1 1 0 011 1v10a1 1 0 01-1 1H7l-4 3V5a1 1 0 011-1z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-          </svg>
-        </div>
-        <span class="nav-label">Messages</span>
-      </button>
-      <button class="nav-tab" data-tab="account" aria-label="Account" aria-selected="false">
-        <div class="nav-icon" aria-hidden="true">
-          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-            <circle cx="11" cy="8" r="3.5" stroke="currentColor" stroke-width="1.6"/>
-            <path d="M3.5 19c0-4.142 3.358-7.5 7.5-7.5s7.5 3.358 7.5 7.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-          </svg>
-        </div>
-        <span class="nav-label">Account</span>
-      </button>
-      <button class="nav-tab" data-tab="devices" aria-label="Devices" aria-selected="false">
-        <div class="nav-icon" aria-hidden="true">
-          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-            <path d="M11 2L3 6v5c0 4.5 3.5 8.5 8 9.5 4.5-1 8-5 8-9.5V6l-8-4z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-          </svg>
-        </div>
-        <span class="nav-label">Devices</span>
-      </button>
-      <button class="nav-tab" data-tab="settings" aria-label="Settings" aria-selected="false">
-        <div class="nav-icon" aria-hidden="true">
-          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-            <circle cx="11" cy="11" r="2.5" stroke="currentColor" stroke-width="1.6"/>
-            <path d="M11 2v2M11 18v2M2 11h2M18 11h2M4.22 4.22l1.42 1.42M16.36 16.36l1.42 1.42M4.22 17.78l1.42-1.42M16.36 5.64l1.42-1.42" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-          </svg>
-        </div>
-        <span class="nav-label">Settings</span>
-      </button>
-    </nav>
-
   </div>
 
-  <script src="./protocol-client.js"></script>
-  <script type="module" src="./app.js"></script>
-
-  <script>
-    // Tab navigation
-    const navTabs = document.querySelectorAll('.nav-tab');
-    const tabPanels = document.querySelectorAll('.tab-panel');
-
-    navTabs.forEach(tab => {
-      tab.addEventListener('click', () => {
-        const target = tab.dataset.tab;
-
-        navTabs.forEach(t => {
-          t.classList.remove('active');
-          t.setAttribute('aria-selected', 'false');
-        });
-        tabPanels.forEach(p => p.classList.remove('active'));
-
-        tab.classList.add('active');
-        tab.setAttribute('aria-selected', 'true');
-        document.getElementById('tab-' + target).classList.add('active');
-      });
-    });
-
-    document.querySelectorAll('.tab-jump-button').forEach(button => {
-      button.addEventListener('click', () => {
-        const target = button.dataset.targetTab;
-        const tab = document.querySelector(`.nav-tab[data-tab="${target}"]`);
-        if (tab) {
-          tab.click();
-        }
-      });
-    });
-
-    // Status toast: watch for changes to #status text and show/hide the bar
-    const statusEl = document.getElementById('status');
-    const statusBar = document.getElementById('status-bar');
-    let statusTimer = null;
-
-    function showStatus() {
-      statusBar.classList.add('visible');
-      clearTimeout(statusTimer);
-      statusTimer = setTimeout(() => {
-        statusBar.classList.remove('visible');
-      }, 4000);
-    }
-
-    // MutationObserver to detect when app.js updates #status
-    const statusObserver = new MutationObserver(() => {
-      showStatus();
-    });
-    statusObserver.observe(statusEl, { childList: true, characterData: true, subtree: true });
-
-    // Show initial status briefly
-    showStatus();
-
-    // Close detail panel
-    const closeDetailBtn = document.getElementById('close-detail-btn');
-    const messageDetail = document.getElementById('message-detail');
-    if (closeDetailBtn) {
-      closeDetailBtn.addEventListener('click', () => {
-        messageDetail.style.display = 'none';
-      });
-    }
-
-    // Watch plaintext-summary for updates and show the detail panel
-    const plaintextSummary = document.getElementById('plaintext-summary');
-    const plaintextObserver = new MutationObserver(() => {
-      if (!plaintextSummary.classList.contains('empty')) {
-        messageDetail.style.display = 'block';
-        // Switch to messages tab if not there
-        const msgTab = document.querySelector('[data-tab="messages"]');
-        if (msgTab && !msgTab.classList.contains('active')) {
-          msgTab.click();
-        }
-      }
-    });
-    plaintextObserver.observe(plaintextSummary, { childList: true, characterData: true, subtree: true, attributes: true });
-
-    // Watch inbox-summary for updates and render visual inbox rows
-    const inboxSummary = document.getElementById('inbox-summary');
-    const inboxOutput = document.getElementById('inbox-output');
-    const inboxList = document.getElementById('inbox-list-rendered');
-    const threadView = document.getElementById('thread-view-rendered');
-    const threadCountLabel = document.getElementById('thread-count-label');
-    const threadMessageCountLabel = document.getElementById('thread-message-count-label');
-    const threadViewTitle = document.getElementById('thread-view-title');
-    const selectedMessageIdInput = document.getElementById('selected-message-id');
-    let selectedThreadKey = '';
-    let selectedMessageId = '';
-
-    function formatThreadTimestamp(value) {
-      if (!value) {
-        return '';
-      }
-      const date = new Date(value);
-      const now = new Date();
-      const isToday = date.toDateString() === now.toDateString();
-      return isToday
-        ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    }
-
-    function escapeHtml(value) {
-      return String(value ?? '')
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#39;');
-    }
-
-    function buildThreadState(messages, summaries = []) {
-      const threads = new Map();
-      const summaryMap = new Map(
-        (Array.isArray(summaries) ? summaries : []).map((summary) => [summary.correspondent, summary])
-      );
-      messages.forEach((message, index) => {
-        const currentUsername = String(window.__deadp0etCurrentUsername || '').trim().toLowerCase();
-        const from = String(message.from || 'unknown');
-        const to = String(message.to || '');
-        const threadKey = from.toLowerCase() === currentUsername && to ? to : from;
-        const existing = threads.get(threadKey) || {
-          key: threadKey,
-          sender: threadKey,
-          messages: []
-        };
-        existing.messages.push({ ...message, _index: index });
-        threads.set(threadKey, existing);
-      });
-
-      Array.from(summaryMap.keys()).forEach((threadKey) => {
-        if (!threads.has(threadKey)) {
-          threads.set(threadKey, {
-            key: threadKey,
-            sender: threadKey,
-            messages: []
-          });
-        }
-      });
-
-      return Array.from(threads.values())
-        .map((thread) => {
-          thread.messages.sort((left, right) => {
-            const leftTime = new Date(left.storedAt || 0).getTime();
-            const rightTime = new Date(right.storedAt || 0).getTime();
-            return leftTime - rightTime;
-          });
-          const summary = summaryMap.get(thread.key) || null;
-          thread.summary = summary;
-          thread.latest = thread.messages[thread.messages.length - 1] || summary?.latestMessage || null;
-          thread.unreadCount = summary?.unreadCount ?? thread.messages.filter((message) => !message.localOnly && !message.readAt).length;
-          thread.messageCount = summary?.messageCount ?? thread.messages.length;
-          return thread;
-        })
-        .sort((left, right) => {
-          const leftTime = new Date(left.latest?.storedAt || 0).getTime();
-          const rightTime = new Date(right.latest?.storedAt || 0).getTime();
-          return rightTime - leftTime;
-        });
-    }
-
-    function setSelectedMessage(messageId) {
-      selectedMessageId = messageId || '';
-      selectedMessageIdInput.value = selectedMessageId;
-    }
-
-    function renderEmptyThreads(message = 'Select a conversation to inspect its encrypted envelopes.') {
-      threadView.innerHTML = `<div class="thread-empty-state">${message}</div>`;
-      threadCountLabel.textContent = '0 threads';
-      threadMessageCountLabel.textContent = 'No selection';
-      threadViewTitle.textContent = 'Thread';
-      selectedThreadKey = '';
-      setSelectedMessage('');
-    }
-
-    function renderInboxUI() {
-      const raw = inboxOutput.value;
-      if (!raw || raw.startsWith('Sign in') || raw.startsWith('No encrypted')) {
-        inboxList.innerHTML = `<div class="inbox-empty-state">
-          <div class="inbox-empty-icon" aria-hidden="true">
-            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-              <rect x="4" y="10" width="32" height="22" rx="3" stroke="#4a1a1a" stroke-width="1.5"/>
-              <path d="M4 14l16 11 16-11" stroke="#4a1a1a" stroke-width="1.5"/>
-            </svg>
-          </div>
-          <p>No messages yet.<br>Refresh inbox or send one.</p>
-        </div>`;
-        renderEmptyThreads();
-        return;
-      }
-
-      let payload;
-      try {
-        payload = JSON.parse(raw);
-      } catch (e) {
-        return;
-      }
-
-      const messages = Array.isArray(payload)
-        ? payload
-        : Array.isArray(payload?.messages)
-          ? payload.messages
-          : [];
-      const conversations = Array.isArray(payload?.conversations) ? payload.conversations : [];
-
-      if ((!Array.isArray(messages) || messages.length === 0) && conversations.length === 0) {
-        inboxList.innerHTML = `<div class="inbox-empty-state"><p>Inbox is empty.</p></div>`;
-        renderEmptyThreads();
-        return;
-      }
-
-      const threads = buildThreadState(messages, conversations);
-      const selectedThread = threads.find((thread) => thread.key === selectedThreadKey) || threads[0];
-      selectedThreadKey = selectedThread.key;
-      const selectedThreadMessages = selectedThread.messages;
-      const selectedMessage =
-        selectedThreadMessages.find((message) => message.messageId === selectedMessageId) ||
-        selectedThreadMessages[selectedThreadMessages.length - 1] ||
-        null;
-      setSelectedMessage(selectedMessage?.messageId || '');
-
-      threadCountLabel.textContent = `${threads.length} thread${threads.length === 1 ? '' : 's'}`;
-      threadViewTitle.textContent = selectedThread.sender;
-      threadMessageCountLabel.textContent = `${selectedThread.messageCount || selectedThreadMessages.length} item${(selectedThread.messageCount || selectedThreadMessages.length) === 1 ? '' : 's'}`;
-
-      inboxList.innerHTML = threads.map((thread) => {
-        const sender = thread.sender || 'unknown';
-        const initials = sender.slice(0, 2).toUpperCase();
-        const colors = ['#cc0000','#880000','#4d0000','#aa2200','#991100'];
-        const color = colors[sender.charCodeAt(0) % colors.length];
-        const ts = formatThreadTimestamp(thread.latest?.storedAt);
-        const latestPayload = thread.latest?.decryptedPayload && typeof thread.latest.decryptedPayload === 'object'
-          ? thread.latest.decryptedPayload
-          : null;
-        const preview = latestPayload
-          ? `${latestPayload.subject || ''} ${latestPayload.body || ''}`.trim()
-          : thread.latest?.localOnly
-            ? `[${thread.latest?.deliveryState || 'sent'}]`
-            : thread.latest?.envelope
-              ? '[encrypted envelope]'
-              : JSON.stringify(thread.latest || {}).slice(0, 48) + '...';
-        return `<button class="inbox-row ${thread.key === selectedThreadKey ? 'active' : ''}" data-thread-key="${escapeHtml(thread.key)}" type="button">
-          <div class="inbox-avatar" style="background:${color}" aria-hidden="true">${initials}</div>
-          <div class="inbox-row-body">
-            <div class="inbox-row-top">
-              <span class="inbox-sender">${escapeHtml(sender)}</span>
-              <span class="inbox-time">${escapeHtml(ts)}</span>
-            </div>
-            <div class="inbox-preview">${escapeHtml(preview)}</div>
-            <div class="thread-preview-meta">${thread.messageCount || thread.messages.length} message${(thread.messageCount || thread.messages.length) === 1 ? '' : 's'}${thread.unreadCount ? ` · ${thread.unreadCount} unread` : ''}</div>
-          </div>
-        </button>`;
-      }).join('');
-
-      if (!selectedThreadMessages.length) {
-        threadView.innerHTML = `<div class="thread-empty-state">No local history is loaded for this thread yet.</div>`;
-        return;
-      }
-
-      threadView.innerHTML = selectedThreadMessages.map((message) => {
-        const isSelected = message.messageId === selectedMessageId;
-        const decryptedPayload = message.decryptedPayload && typeof message.decryptedPayload === 'object'
-          ? message.decryptedPayload
-          : null;
-        const isOutgoing = Boolean(message.localOnly);
-        const bodyText = decryptedPayload
-          ? `${decryptedPayload.subject || 'Untitled'}\n${decryptedPayload.body || ''}`.trim()
-          : 'Encrypted envelope waiting on device selection and local keys.';
-        const decryptedHint = decryptedPayload
-          ? `<span class="thread-message-flag thread-message-flag-success">decrypted</span>`
-          : '';
-        const deliveryHint = isOutgoing
-          ? `<span class="thread-message-flag thread-message-flag-outgoing">${escapeHtml(message.deliveryState || 'sent')}</span>`
-          : '';
-        const retryAction = isOutgoing && message.deliveryState === 'failed'
-          ? `<button class="thread-retry-button" type="button" data-action="retry-send" data-message-id="${escapeHtml(message.messageId || '')}">Retry send</button>`
-          : '';
-        const deliveryError = isOutgoing && message.deliveryState === 'failed' && message.deliveryError
-          ? `<div class="thread-message-error">${escapeHtml(message.deliveryError)} ${retryAction}</div>`
-          : '';
-        const reservationHint = message.envelope?.oneTimePrekeyId
-          ? `<span class="thread-message-flag">otp ${escapeHtml(message.envelope.oneTimePrekeyId)}</span>`
-          : '';
-        return `<div class="thread-message-card ${isSelected ? 'active' : ''} ${isOutgoing ? 'thread-message-card-outgoing' : ''}" data-message-id="${escapeHtml(message.messageId || '')}" tabindex="0" role="button">
-          <div class="thread-message-top">
-            <span class="thread-message-from">${escapeHtml(isOutgoing ? 'you' : (message.from || 'unknown'))}</span>
-            <span class="thread-message-time">${escapeHtml(formatThreadTimestamp(message.storedAt))}</span>
-          </div>
-          <div class="thread-message-body ${decryptedPayload ? 'thread-message-body-plaintext' : ''}">${escapeHtml(bodyText)}</div>
-          <div class="thread-message-meta">
-            <span class="thread-message-id">${escapeHtml(message.messageId || 'pending')}</span>
-            ${decryptedHint}
-            ${deliveryHint}
-            ${reservationHint}
-          </div>
-          ${deliveryError}
-        </div>`;
-      }).join('');
-    }
-
-    const inboxObserver = new MutationObserver(renderInboxUI);
-    inboxObserver.observe(inboxOutput, { childList: true, characterData: true, subtree: true });
-    inboxList.addEventListener('click', (event) => {
-      const target = event.target.closest('[data-thread-key]');
-      if (!target) {
-        return;
-      }
-      selectedThreadKey = target.getAttribute('data-thread-key') || '';
-      selectedMessageId = '';
-      renderInboxUI();
-    });
-    threadView.addEventListener('click', (event) => {
-      const retryTarget = event.target.closest('[data-action="retry-send"]');
-      if (retryTarget) {
-        const messageId = retryTarget.getAttribute('data-message-id') || '';
-        if (messageId && window.__deadp0etRetryFailedMessage) {
-          window.__deadp0etRetryFailedMessage(messageId);
-        }
-        return;
-      }
-      const target = event.target.closest('[data-message-id]');
-      if (!target) {
-        return;
-      }
-      setSelectedMessage(target.getAttribute('data-message-id') || '');
-      renderInboxUI();
-    });
-    renderInboxUI();
-  </script>
-
+  <script src="/app.js"></script>
 </body>
 </html>

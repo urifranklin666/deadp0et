@@ -1,19 +1,16 @@
 {
   "name": "deadp0et",
-  "version": "0.1.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "deadp0et secure messaging backend prototype",
-  "workspaces": [
-    "mobile",
-    "packages/*"
-  ],
+  "description": "deadp0et — e2e encrypted messenger",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js",
-    "check": "node --check server.js",
-    "test": "node --test",
-    "mobile:start": "npm --workspace mobile start",
-    "mobile:web": "npm --workspace mobile run web",
-    "protocol:check": "node --check packages/protocol-client/src/index.js"
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^12.9.0",
+    "jsonwebtoken": "^9.0.2",
+    "ws": "^8.18.0"
   }
 }

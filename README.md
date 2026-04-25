@@ -1,121 +1,86 @@
 # deadp0et
 
-`deadp0et` is a secure messaging app in active development. The repo currently includes a working backend, a React
-Native / Expo mobile client, a browser reference client, and shared client logic used across both.
+An end-to-end encrypted messenger. The server routes ciphertext — it never sees plaintext, keys, or metadata beyond what's strictly necessary to deliver a message.
 
-The product direction is straightforward:
+Built for [deadplug.digital](https://deadplug.digital).
 
-- account-based secure messaging with per-device key material
-- local encryption and decryption on client devices
-- server-side routing, mailbox storage, and device bundle distribution
-- multi-device account support with device trust and prekey management
+---
 
-## Current product surface
+## How it works
 
-The mobile app now supports:
+**Key generation** happens entirely in the browser using the WebCrypto API. On registration, an ECDH P-256 keypair is generated client-side. The private key is encrypted with a key derived from your password via PBKDF2 (200k iterations, SHA-256), and the resulting ciphertext is stored on the server. The server never holds a raw private key.
 
-- account creation and login against the live backend
-- secure local storage of session and device state
-- real per-device key generation
-- encrypted compose and inbox decrypt flows
-- trust-on-first-use device verification with safety numbers
-- trust record review and explicit re-trust of changed device keys
-- device listing, low-prekey monitoring, local prekey replenishment, revocation of other devices
-- registration of this phone as an additional device
-- settings for backend URL, health checks, logout, and local state reset
+**Per-conversation encryption** uses ECDH to derive a unique AES-GCM 256 shared secret between two users. Every message is encrypted before it leaves the browser.
 
-The browser app remains in the repo as a reference client and development surface for the same backend and protocol.
+**Media** gets its own random AES-GCM key per file. That file key is encrypted with the conversation key before upload. The server stores opaque binary blobs — it cannot read filenames, types, or content.
 
-## Repository layout
+**Sessions** use JWT auth (30-day expiry). On returning visits, a password prompt re-derives the private key from the server-stored ciphertext — no key material persists in browser storage.
 
-- `mobile/`: Expo / React Native client
-- `packages/protocol-client/`: shared client helpers and API surface
-- `protocol-client.js`: browser-safe shared helper bundle
-- `backend/`: modular Node.js backend services
-- `server.js`: backend entrypoint
-- `app.js`, `index.html`, `styles.css`: browser reference client
-- `docs/api-contract.md`: backend API contract
-- `docs/protocol.md`: protocol and design notes
+---
 
-## Backend
+## Stack
 
-The backend already implements the core app flows:
+- **Backend:** Node.js, `ws`, `better-sqlite3`, `bcryptjs`, `jsonwebtoken`
+- **Frontend:** Vanilla JS + WebCrypto API — no framework, no bundler
+- **Storage:** SQLite for accounts, conversations, and message envelopes; local filesystem for encrypted media blobs
+- **Transport:** REST for auth, conversations, and media; WebSocket for real-time message delivery
 
-- account creation and session issuance
-- login throttling and active-session limits
-- public device bundle lookup
-- authenticated device registration, revocation, and prekey rotation
-- one-time prekey reservation and release lifecycle
-- encrypted envelope delivery, inbox fetch, and acknowledgement
-- health reporting and prekey-related counters
-
-The service is split by domain under `backend/` so storage and delivery work can keep evolving without collapsing back
-into one large server file.
+---
 
 ## Running locally
 
-Install dependencies:
-
 ```bash
 npm install
-```
-
-Run the backend:
-
-```bash
 npm start
 ```
 
-The backend listens on `http://0.0.0.0:3000` by default and serves the browser client from the same origin.
+Server listens on `http://0.0.0.0:3000` and serves the browser client from the same origin.
 
-Run the mobile app:
-
-```bash
-npm --workspace mobile start
-```
-
-If you are working on the Expo client, use a current Node 20 release. The mobile workspace may install on older Node
-versions, but Expo tooling is more reliable on Node 20.x.
-
-## Testing
-
-Run the backend test suite:
+Set `JWT_SECRET` in your environment before running in production:
 
 ```bash
-npm test
+JWT_SECRET=your-secret-here npm start
 ```
 
-Run the mobile typecheck:
+---
 
-```bash
-./node_modules/.bin/tsc -p mobile/tsconfig.json --noEmit
-```
-
-## Deployment
-
-This repo includes:
-
-- `Dockerfile`
-- `docker-compose.yml`
-
-Start the service with:
+## Docker
 
 ```bash
 docker compose up -d --build
 ```
 
-## Roadmap
+Data (SQLite DB + encrypted media) is persisted to `./data/`.
 
-The highest-value next steps are:
+---
 
-- push notification registration and delivery signaling
-- richer mobile onboarding and device portability
-- production datastore replacement for the file-backed repository
-- stronger auth and recovery flows
-- ratcheting and further protocol hardening
-- media, conversation UX, and app polish
+## Repository layout
 
-## Documentation
+```
+server.js          — HTTP routing + WebSocket server
+backend/
+  db.js            — SQLite schema and migrations
+  auth.js          — register, login, JWT middleware
+  messages.js      — conversation and message storage
+  media.js         — encrypted blob upload/download
+  ws.js            — real-time delivery and ack
+app.js             — browser client: crypto, state machine, UI
+index.html         — app shell (auth, home, chat screens)
+styles.css         — UI: deadplug.digital aesthetic
+data/              — SQLite DB and encrypted media (gitignored)
+```
 
-- API contract: [docs/api-contract.md](./docs/api-contract.md)
-- Protocol notes: [docs/protocol.md](./docs/protocol.md)
+---
+
+## What the server can and cannot see
+
+| | Visible to server |
+|---|---|
+| Usernames | yes |
+| Password | hashed (bcrypt) |
+| Public keys | yes (required for key exchange) |
+| Private keys | encrypted ciphertext only |
+| Message content | no |
+| Media content | no |
+| Filenames / MIME types | no |
+| Conversation shared key | no |

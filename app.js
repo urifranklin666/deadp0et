@@ -1,1570 +1,833 @@
-const {
-  appendLocalOneTimePrekeysRecord,
-  assessTrustState,
-  STORAGE_KEYS,
-  consumeLocalOneTimePrekeyRecord,
-  computeDeviceFingerprint,
-  createApiClient,
-  getContactTrustRecord: getSharedContactTrustRecord,
-  getLocalDeviceRecord,
-  hydrateLocalDeviceRecord,
-  listLocalDevicesForUsername,
-  normalizeApiBase,
-  normalizeUsername,
-  serializeLocalDeviceRecord: sharedSerializeLocalDeviceRecord,
-  trustDeviceFingerprint,
-  upsertContactTrustRecord,
-  upsertLocalDeviceRecord
-} = window.deadp0etProtocolClient;
-const ONE_TIME_PREKEY_BATCH_SIZE = 8;
+// deadp0et messenger client
+// Crypto: ECDH P-256 keypair per user, AES-GCM 256 per conversation, PBKDF2 private-key wrapping
 
-const state = {
-  currentUser: null,
-  currentUsername: "",
-  lastEnvelope: "",
-  inbox: [],
-  conversations: [],
-  lookupCache: null,
-  devices: []
-};
+const App = (() => {
 
-const signupUsername = document.querySelector("#signup-username");
-const signupPassword = document.querySelector("#signup-password");
-const sessionOutput = document.querySelector("#session-output");
-const directoryOutput = document.querySelector("#directory-output");
-const recipientUsername = document.querySelector("#recipient-username");
-const messageSubject = document.querySelector("#message-subject");
-const messageBody = document.querySelector("#message-body");
-const envelopeOutput = document.querySelector("#envelope-output");
-const inboxOutput = document.querySelector("#inbox-output");
-const plaintextOutput = document.querySelector("#plaintext-output");
-const signupButton = document.querySelector("#signup-button");
-const loginButton = document.querySelector("#login-button");
-const bootstrapButton = document.querySelector("#bootstrap-button");
-const sendButton = document.querySelector("#send-button");
-const copyEnvelopeButton = document.querySelector("#copy-envelope-button");
-const refreshInboxButton = document.querySelector("#refresh-inbox-button");
-const decryptSelectedButton = document.querySelector("#decrypt-selected-button");
-const statusNode = document.querySelector("#status");
-const apiBaseInput = document.querySelector("#api-base");
-const saveApiButton = document.querySelector("#save-api-button");
-const healthButton = document.querySelector("#health-button");
-const healthOutput = document.querySelector("#health-output");
-const healthSummary = document.querySelector("#health-summary");
-const lookupUsername = document.querySelector("#lookup-username");
-const lookupButton = document.querySelector("#lookup-button");
-const sessionSummary = document.querySelector("#session-summary");
-const bundleSummary = document.querySelector("#bundle-summary");
-const envelopeSummary = document.querySelector("#envelope-summary");
-const inboxSummary = document.querySelector("#inbox-summary");
-const plaintextSummary = document.querySelector("#plaintext-summary");
-const refreshDevicesButton = document.querySelector("#refresh-devices-button");
-const addDeviceButton = document.querySelector("#add-device-button");
-const applyDeviceActionButton = document.querySelector("#apply-device-action-button");
-const deviceActionId = document.querySelector("#device-action-id");
-const deviceActionMode = document.querySelector("#device-action-mode");
-const devicesOutput = document.querySelector("#devices-output");
-const devicesSummary = document.querySelector("#devices-summary");
-const devicePortabilitySummary = document.querySelector("#device-portability-summary");
-const devicePortabilityOutput = document.querySelector("#device-portability-output");
-const localDeviceSelect = document.querySelector("#local-device-select");
-const exportDeviceButton = document.querySelector("#export-device-button");
-const importDeviceButton = document.querySelector("#import-device-button");
-const selectedMessageIdInput = document.querySelector("#selected-message-id");
+  // ── State ────────────────────────────────────────────────────────
+  let jwt         = null;
+  let myUserId    = null;
+  let myUsername  = null;
+  let myKeyPair   = null;      // { publicKey: CryptoKey, privateKey: CryptoKey }
+  let ws          = null;
+  let activeConvId = null;
+  const sharedKeys = new Map(); // convId → AES-GCM CryptoKey
+  const peerPubKeys = new Map(); // userId → ECDH CryptoKey (public)
 
-const api = createApiClient({
-  getApiBase,
-  getAccessToken: () => state.currentUser?.session?.accessToken || null
-});
+  // ── DOM shorthand ────────────────────────────────────────────────
+  const $ = id => document.getElementById(id);
 
-function setStatus(message, type = "info") {
-  statusNode.textContent = message;
-  statusNode.style.color = type === "error" ? "var(--danger)" : "var(--success)";
-}
+  // ── Crypto ───────────────────────────────────────────────────────
 
-function bytesToBase64(bytes) {
-  let binary = "";
-  bytes.forEach((value) => {
-    binary += String.fromCharCode(value);
-  });
-  return btoa(binary);
-}
-
-function base64ToBytes(base64) {
-  const binary = atob(base64);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
-}
-
-function getDefaultApiBase() {
-  return window.location.origin;
-}
-
-function getApiBase() {
-  const value = normalizeApiBase(apiBaseInput.value);
-  return value || getDefaultApiBase();
-}
-
-function saveApiBase() {
-  const apiBase = getApiBase();
-  localStorage.setItem(STORAGE_KEYS.apiBase, apiBase);
-  apiBaseInput.value = apiBase;
-  setStatus(`Backend endpoint saved: ${apiBase}`);
-}
-
-function loadLocalDevices() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.localDevices);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch (error) {
-    return {};
-  }
-}
-
-function saveLocalDevices(devices) {
-  localStorage.setItem(STORAGE_KEYS.localDevices, JSON.stringify(devices));
-}
-
-function loadContactTrust() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.contactTrust);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch (error) {
-    return {};
-  }
-}
-
-function saveContactTrust(records) {
-  localStorage.setItem(STORAGE_KEYS.contactTrust, JSON.stringify(records));
-}
-
-function getLocalDevicesForUsername(username) {
-  return listLocalDevicesForUsername(loadLocalDevices(), username);
-}
-
-function getLocalDevice(username, deviceId = "") {
-  return getLocalDeviceRecord(loadLocalDevices(), username, deviceId);
-}
-
-function storeLocalDevice(record) {
-  const devices = upsertLocalDeviceRecord(loadLocalDevices(), record);
-  saveLocalDevices(devices);
-}
-
-function renderLocalDeviceOptions(username = signupUsername.value) {
-  const normalized = normalizeUsername(username);
-  const records = normalized ? getLocalDevicesForUsername(normalized) : [];
-  const selectedValue = localDeviceSelect.value;
-
-  localDeviceSelect.innerHTML = "";
-  const defaultOption = document.createElement("option");
-  defaultOption.value = "";
-  defaultOption.textContent = records.length
-    ? "Use the first local device for this account"
-    : "No local devices stored for this account";
-  localDeviceSelect.appendChild(defaultOption);
-
-  for (const record of records) {
-    const option = document.createElement("option");
-    option.value = record.deviceId;
-    option.textContent = `${record.deviceId} (${new Date(record.storedAt).toLocaleString()})`;
-    localDeviceSelect.appendChild(option);
-  }
-
-  localDeviceSelect.value = records.some((record) => record.deviceId === selectedValue) ? selectedValue : "";
-}
-
-function setSummary(node, html, empty = false) {
-  node.innerHTML = html;
-  node.classList.toggle("empty", empty);
-}
-
-function getConversationKey(message) {
-  const currentUsername = String(state.currentUser?.username || "").trim().toLowerCase();
-  const from = String(message?.from || "unknown");
-  const to = String(message?.to || "");
-  return from.toLowerCase() === currentUsername && to ? to : from;
-}
-
-function isSameMessageContent(left, right) {
-  const leftPayload = left?.decryptedPayload || {};
-  const rightPayload = right?.decryptedPayload || {};
-  return (
-    String(left?.from || "") === String(right?.from || "")
-    && String(left?.to || "") === String(right?.to || "")
-    && String(left?.recipientDeviceId || "") === String(right?.recipientDeviceId || "")
-    && String(leftPayload.subject || "") === String(rightPayload.subject || "")
-    && String(leftPayload.body || "") === String(rightPayload.body || "")
-  );
-}
-
-async function sha256(text) {
-  const bytes = new TextEncoder().encode(text);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return bytesToBase64(new Uint8Array(digest));
-}
-
-function getContactTrustRecord(username, deviceId) {
-  return getSharedContactTrustRecord(loadContactTrust(), username, deviceId);
-}
-
-function setContactTrustRecord(username, deviceId, record) {
-  const records = upsertContactTrustRecord(loadContactTrust(), username, deviceId, record);
-  saveContactTrust(records);
-}
-
-async function assessDeviceTrust(username, device) {
-  const normalizedUsername = normalizeUsername(username);
-  const deviceId = String(device.deviceId || "").trim();
-  const record = getContactTrustRecord(normalizedUsername, deviceId);
-  const { fingerprint, safetyNumber } = await computeDeviceFingerprint(normalizedUsername, device);
-  const now = new Date().toISOString();
-  const assessment = assessTrustState(record, {
-    username: normalizedUsername,
-    deviceId,
-    fingerprint,
-    safetyNumber,
-    now
-  });
-  setContactTrustRecord(normalizedUsername, deviceId, assessment.nextRecord);
-  return assessment.result;
-}
-
-async function trustCurrentDeviceFingerprint(username, device) {
-  const normalizedUsername = normalizeUsername(username);
-  const deviceId = String(device.deviceId || "").trim();
-  const { fingerprint, safetyNumber } = await computeDeviceFingerprint(normalizedUsername, device);
-  const previous = getContactTrustRecord(normalizedUsername, deviceId);
-  const now = new Date().toISOString();
-  const nextRecord = trustDeviceFingerprint(previous, {
-    username: normalizedUsername,
-    deviceId,
-    fingerprint,
-    safetyNumber,
-    now
-  });
-  setContactTrustRecord(normalizedUsername, deviceId, nextRecord);
-  return nextRecord;
-}
-
-async function deriveAesKey(sharedSecret) {
-  const secretParts = Array.isArray(sharedSecret) ? sharedSecret : [sharedSecret];
-  const decodedParts = secretParts.map((secret) => base64ToBytes(secret));
-  const totalLength = decodedParts.reduce((sum, bytes) => sum + bytes.length, 0);
-  const joined = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const bytes of decodedParts) {
-    joined.set(bytes, offset);
-    offset += bytes.length;
-  }
-  const digest = await crypto.subtle.digest("SHA-256", joined);
-  return crypto.subtle.importKey(
-    "raw",
-    digest,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"]
-  );
-}
-
-async function exportKeyPair(privateKey) {
-  return crypto.subtle.exportKey("jwk", privateKey);
-}
-
-async function importPrivateKey(jwk) {
-  return crypto.subtle.importKey(
-    "jwk",
-    jwk,
-    { name: "ECDH", namedCurve: "P-256" },
-    true,
-    ["deriveBits"]
-  );
-}
-
-async function generateOneTimePrekeySet(count = ONE_TIME_PREKEY_BATCH_SIZE) {
-  const publicOneTimePrekeys = [];
-  const privateOneTimePrekeyKeys = {};
-
-  for (let index = 0; index < count; index += 1) {
-    const oneTimePrekeyPair = await crypto.subtle.generateKey(
+  async function generateKeyPair() {
+    return crypto.subtle.generateKey(
       { name: "ECDH", namedCurve: "P-256" },
-      true,
-      ["deriveBits"]
-    );
-    const keyId = crypto.randomUUID();
-    publicOneTimePrekeys.push({
-      keyId,
-      key: await crypto.subtle.exportKey("jwk", oneTimePrekeyPair.publicKey)
-    });
-    privateOneTimePrekeyKeys[keyId] = oneTimePrekeyPair.privateKey;
-  }
-
-  return {
-    publicOneTimePrekeys,
-    privateOneTimePrekeyKeys
-  };
-}
-
-async function generateDeviceBundle() {
-  const identity = await crypto.subtle.generateKey(
-    { name: "ECDH", namedCurve: "P-256" },
-    true,
-    ["deriveBits"]
-  );
-  const signedPrekey = await crypto.subtle.generateKey(
-    { name: "ECDH", namedCurve: "P-256" },
-    true,
-    ["deriveBits"]
-  );
-  const identityPublic = await crypto.subtle.exportKey("jwk", identity.publicKey);
-  const prekeyPublic = await crypto.subtle.exportKey("jwk", signedPrekey.publicKey);
-  const oneTimePrekeySet = await generateOneTimePrekeySet();
-  const prekeySignature = await sha256(JSON.stringify(identityPublic) + JSON.stringify(prekeyPublic));
-
-  return {
-    privateKeys: {
-      identityPrivateKey: identity.privateKey,
-      signedPrekeyPrivateKey: signedPrekey.privateKey,
-      oneTimePrekeyPrivateKeys: oneTimePrekeySet.privateOneTimePrekeyKeys
-    },
-    publicBundle: {
-      identityKey: identityPublic,
-      signedPrekey: prekeyPublic,
-      prekeySignature,
-      oneTimePrekeys: oneTimePrekeySet.publicOneTimePrekeys,
-      deviceId: crypto.randomUUID()
-    }
-  };
-}
-
-async function serializeLocalDeviceRecord(username, passwordVerifier, accountId, deviceBundle) {
-  return sharedSerializeLocalDeviceRecord({
-    username,
-    passwordVerifier,
-    accountId,
-    deviceBundle,
-    exportPrivateKey: exportKeyPair
-  });
-}
-
-async function hydrateLocalDevice(record) {
-  return hydrateLocalDeviceRecord(record, importPrivateKey);
-}
-
-function consumeLocalOneTimePrekey(username, deviceId, keyId) {
-  const record = getLocalDevice(username, deviceId);
-  const nextRecord = consumeLocalOneTimePrekeyRecord(record, keyId);
-  if (!nextRecord) {
-    return false;
-  }
-  storeLocalDevice(nextRecord);
-  return true;
-}
-
-async function appendLocalOneTimePrekeys(username, deviceId, privateOneTimePrekeyKeys, publicOneTimePrekeys = []) {
-  const record = getLocalDevice(username, deviceId);
-  const nextRecord = await appendLocalOneTimePrekeysRecord(record, privateOneTimePrekeyKeys, publicOneTimePrekeys, exportKeyPair);
-  if (!nextRecord) {
-    return false;
-  }
-  storeLocalDevice(nextRecord);
-  return true;
-}
-
-async function deriveSharedSecret(privateKey, remotePublicJwk) {
-  const remotePublicKey = await crypto.subtle.importKey(
-    "jwk",
-    remotePublicJwk,
-    { name: "ECDH", namedCurve: "P-256" },
-    true,
-    []
-  );
-  const bits = await crypto.subtle.deriveBits(
-    { name: "ECDH", public: remotePublicKey },
-    privateKey,
-    256
-  );
-  return bytesToBase64(new Uint8Array(bits));
-}
-
-async function apiRequest(path, options = {}) {
-  return api.request(path, options);
-}
-
-async function renderLookupResult(payload = null) {
-  state.lookupCache = payload;
-  directoryOutput.value = payload
-    ? JSON.stringify(payload, null, 2)
-    : "Use bundle lookup to fetch a recipient's active public keys.";
-
-  if (!payload) {
-    setSummary(bundleSummary, "No recipient bundle loaded.", true);
-    return;
-  }
-
-  const devices = payload.devices || [];
-  const trustRows = [];
-  for (const device of devices) {
-    const trust = await assessDeviceTrust(payload.username, device);
-    const action = trust.changed
-      ? `<button type="button" data-action="trust-device" data-username="${payload.username}" data-device-id="${device.deviceId}">Trust Current Device Keys</button>`
-      : "";
-    trustRows.push(
-      `<div><strong>${device.deviceId}</strong><br>` +
-        `Safety #: <code>${trust.safetyNumber}</code><br>` +
-        `${trust.note}${action ? `<br>${action}` : ""}</div>`
-    );
-  }
-  const deviceSummary = trustRows.length ? trustRows.join("<br><br>") : "none";
-
-  setSummary(
-    bundleSummary,
-    `<strong>${payload.username}</strong><br>${devices.length} active device bundle(s)<br>${deviceSummary}`
-  );
-}
-
-function renderDevices(payload = null) {
-  if (!payload) {
-    state.devices = [];
-    devicesOutput.value = "Sign in to inspect account devices.";
-    setSummary(devicesSummary, "No device data loaded.", true);
-    setSummary(devicePortabilitySummary, "No local device note yet.", true);
-    devicePortabilityOutput.value = "Device portability notes will appear here.";
-    return;
-  }
-
-  state.devices = payload.devices || [];
-  devicesOutput.value = JSON.stringify(payload, null, 2);
-
-  const activeDevices = state.devices.filter((device) => !device.revokedAt);
-  const revokedDevices = state.devices.filter((device) => device.revokedAt);
-  const lowPrekeyDevices = activeDevices.filter((device) => device.lowOneTimePrekeys);
-  const lowThreshold = Number(payload.lowOneTimePrekeyThreshold || 0);
-  const lowPrekeySummary = lowPrekeyDevices.length
-    ? lowPrekeyDevices
-        .map((device) => `${device.deviceId} (${device.availableOneTimePrekeys})`)
-        .join(", ")
-    : "none";
-  const localDeviceId = state.currentUser?.publicBundle?.deviceId;
-  const localLowPrekeyDevice = lowPrekeyDevices.find((device) => device.deviceId === localDeviceId) || null;
-
-  setSummary(
-    devicesSummary,
-    `<strong>${activeDevices.length}</strong> active device(s)<br>` +
-      `<strong>${revokedDevices.length}</strong> revoked device(s)<br>` +
-      `<strong>${lowPrekeyDevices.length}</strong> low-prekey device(s)${lowThreshold ? ` (threshold ${lowThreshold})` : ""}<br>` +
-      `${lowPrekeySummary}` +
-      (localLowPrekeyDevice
-        ? `<br><button type="button" id="replenish-local-prekeys-inline">Replenish Local Prekeys</button>`
-        : "")
-  );
-
-  const localDevicePresent = Boolean(localDeviceId && activeDevices.some((device) => device.deviceId === localDeviceId));
-  setSummary(
-    devicePortabilitySummary,
-    localDevicePresent
-      ? `<strong>Local device ready</strong><br>This browser holds the private keys for <strong>${localDeviceId}</strong>.`
-      : "This browser may not hold the private keys for every active device on the account.",
-    !localDevicePresent
-  );
-
-  devicePortabilityOutput.value = localDevicePresent
-    ? `This browser can decrypt envelopes addressed to ${localDeviceId}. Additional devices must generate or import their own private keys locally.`
-    : "Authentication alone is not enough for decryption. A browser can only decrypt messages for devices whose private keys are stored locally.";
-}
-
-async function replenishLocalPrekeys(deviceId) {
-  if (!state.currentUser) {
-    setStatus("Sign in before replenishing one-time prekeys.", "error");
-    return;
-  }
-
-  const localDeviceId = state.currentUser.publicBundle?.deviceId;
-  if (!localDeviceId || deviceId !== localDeviceId) {
-    setStatus("One-click replenish is only available for the local device in this browser.", "error");
-    return;
-  }
-
-  const targetDevice = state.devices.find((device) => device.deviceId === deviceId && !device.revokedAt);
-  if (!targetDevice) {
-    setStatus("Target device is not active on this account.", "error");
-    return;
-  }
-
-  setStatus(`Replenishing one-time prekeys for local device ${deviceId}...`);
-  const oneTimePrekeySet = await generateOneTimePrekeySet();
-  const existingOneTimePrekeys = Array.isArray(targetDevice.oneTimePrekeys) ? targetDevice.oneTimePrekeys : [];
-
-  await apiRequest("/v1/prekeys/rotate", {
-    method: "POST",
-    body: JSON.stringify({
-      deviceId,
-      signedPrekey: targetDevice.signedPrekey,
-      prekeySignature: targetDevice.prekeySignature,
-      oneTimePrekeys: [...existingOneTimePrekeys, ...oneTimePrekeySet.publicOneTimePrekeys]
-    })
-  });
-
-  state.currentUser.privateKeys.oneTimePrekeyPrivateKeys = {
-    ...(state.currentUser.privateKeys.oneTimePrekeyPrivateKeys || {}),
-    ...oneTimePrekeySet.privateOneTimePrekeyKeys
-  };
-  await appendLocalOneTimePrekeys(state.currentUser.username, deviceId, oneTimePrekeySet.privateOneTimePrekeyKeys, oneTimePrekeySet.publicOneTimePrekeys);
-  await fetchDevices();
-  setStatus(`Replenished local one-time prekeys for ${deviceId}.`);
-}
-
-function renderSession() {
-  if (!state.currentUser) {
-    window.__deadp0etCurrentUsername = "";
-    sessionOutput.value = "No active session.";
-    setSummary(sessionSummary, "No active account session.", true);
-    return;
-  }
-
-  window.__deadp0etCurrentUsername = state.currentUser.username;
-
-  sessionOutput.value = JSON.stringify({
-    apiBase: getApiBase(),
-    accountId: state.currentUser.accountId,
-    username: state.currentUser.username,
-    session: {
-      accessTokenPreview: `${state.currentUser.session.accessToken.slice(0, 16)}...`,
-      deviceId: state.currentUser.session.deviceId
-    },
-    localDevice: {
-      deviceId: state.currentUser.publicBundle.deviceId,
-      hasPrivateKeys: Boolean(state.currentUser.privateKeys?.signedPrekeyPrivateKey)
-    },
-    protocol: {
-      identityCurve: "P-256 ECDH",
-      contentCipher: "AES-GCM-256",
-      serverVisibility: "account metadata + ciphertext envelope only"
-    }
-  }, null, 2);
-
-  setSummary(
-    sessionSummary,
-    `<strong>${state.currentUser.username}</strong><br>Device ${state.currentUser.session.deviceId}<br>Session expires ${new Date(state.currentUser.session.expiresAt).toLocaleString()}`
-  );
-}
-
-function renderInbox(messages = null, conversations = null) {
-  if (!state.currentUser) {
-    state.inbox = [];
-    state.conversations = [];
-    inboxOutput.value = "Sign in to fetch encrypted messages.";
-    setSummary(inboxSummary, "No inbox data loaded.", true);
-    return [];
-  }
-
-  if (Array.isArray(messages)) {
-    state.inbox = messages;
-  }
-  if (Array.isArray(conversations)) {
-    state.conversations = conversations;
-  }
-
-  const currentSelectedMessageId = selectedMessageIdInput?.value || "";
-  const selectedExists = currentSelectedMessageId
-    ? state.inbox.some((message) => message.messageId === currentSelectedMessageId)
-    : false;
-  if (selectedMessageIdInput) {
-    selectedMessageIdInput.value = selectedExists
-      ? currentSelectedMessageId
-      : state.inbox[state.inbox.length - 1]?.messageId || "";
-  }
-
-  inboxOutput.value = state.inbox.length
-    ? JSON.stringify({
-        conversations: state.conversations,
-        messages: state.inbox
-      }, null, 2)
-    : "No encrypted envelopes for this device yet.";
-
-  if (!state.inbox.length) {
-    setSummary(inboxSummary, `No encrypted envelopes for <strong>${state.currentUser.session.deviceId}</strong>.`, true);
-  } else {
-    const latest = state.inbox[state.inbox.length - 1];
-    setSummary(
-      inboxSummary,
-      `<strong>${state.conversations.length}</strong> thread(s) synced for device <strong>${state.currentUser.session.deviceId}</strong><br>` +
-        `Latest activity with <strong>${getConversationKey(latest)}</strong>`
+      true, ["deriveKey"]
     );
   }
 
-  return state.inbox;
-}
-
-function getSelectedInboxMessage() {
-  const selectedMessageId = selectedMessageIdInput?.value || "";
-  if (selectedMessageId) {
-    const selected = state.inbox.find((message) => message.messageId === selectedMessageId);
-    if (selected) {
-      return selected;
-    }
-  }
-  return state.inbox[state.inbox.length - 1] || null;
-}
-
-function updateInboxMessage(messageId, updater) {
-  let updated = false;
-  state.inbox = state.inbox.map((message) => {
-    if (message.messageId !== messageId) {
-      return message;
-    }
-    updated = true;
-    return updater(message);
-  });
-  if (updated) {
-    renderInbox();
-  }
-  return updated;
-}
-
-function appendLocalSentMessage(message) {
-  state.inbox = [...state.inbox, message];
-  if (selectedMessageIdInput) {
-    selectedMessageIdInput.value = message.messageId || "";
-  }
-  renderInbox();
-}
-
-function replaceInboxMessage(messageId, replacement) {
-  let replaced = false;
-  state.inbox = state.inbox.map((message) => {
-    if (message.messageId !== messageId) {
-      return message;
-    }
-    replaced = true;
-    return replacement;
-  });
-  if (replaced) {
-    if (selectedMessageIdInput?.value === messageId) {
-      selectedMessageIdInput.value = replacement.messageId || "";
-    }
-    renderInbox();
-  }
-  return replaced;
-}
-
-function getInboxMessageById(messageId) {
-  return state.inbox.find((message) => message.messageId === messageId) || null;
-}
-
-async function deliverPreparedMessage(prekeyBundle, subject, body, existingMessageId = "") {
-  const envelope = await encryptForRecipient(state.currentUser, prekeyBundle, subject, body);
-  const messageTimestamp = new Date().toISOString();
-  const pendingMessageId = existingMessageId || `local-${crypto.randomUUID()}`;
-  const pendingMessage = {
-    messageId: pendingMessageId,
-    from: state.currentUser.username,
-    to: prekeyBundle.username,
-    storedAt: messageTimestamp,
-    deliveredAt: null,
-    localOnly: true,
-    deliveryState: "sending",
-    deliveryError: null,
-    envelope: {
-      protocol: envelope.protocol,
-      ephemeralKey: envelope.ephemeralKey,
-      iv: envelope.iv,
-      ciphertext: envelope.ciphertext,
-      oneTimePrekeyId: envelope.oneTimePrekeyId,
-      prekeyReservationToken: envelope.prekeyReservationToken
-    },
-    decryptedPayload: {
-      subject,
-      body,
-      sentAt: messageTimestamp,
-      senderDeviceId: state.currentUser.publicBundle.deviceId
-    }
-  };
-
-  if (existingMessageId && getInboxMessageById(existingMessageId)) {
-    replaceInboxMessage(existingMessageId, pendingMessage);
-  } else {
-    appendLocalSentMessage(pendingMessage);
+  async function exportPublicKeyJwk(kp) {
+    return crypto.subtle.exportKey("jwk", kp.publicKey);
   }
 
-  try {
-    const stored = await apiRequest("/v1/messages", {
-      method: "POST",
-      body: JSON.stringify({
-        to: prekeyBundle.username,
-        recipientDeviceId: prekeyBundle.device.deviceId,
-        envelope: {
-          protocol: envelope.protocol,
-          ephemeralKey: envelope.ephemeralKey,
-          iv: envelope.iv,
-          ciphertext: envelope.ciphertext,
-          oneTimePrekeyId: envelope.oneTimePrekeyId,
-          prekeyReservationToken: envelope.prekeyReservationToken
-        }
-      })
-    });
+  async function importPublicKey(jwk) {
+    return crypto.subtle.importKey(
+      "jwk", jwk, { name: "ECDH", namedCurve: "P-256" }, false, []
+    );
+  }
 
-    state.lastEnvelope = JSON.stringify({
-      ...envelope,
-      storedAt: stored.storedAt,
-      messageId: stored.messageId
-    }, null, 2);
-    replaceInboxMessage(pendingMessageId, {
-      messageId: stored.messageId,
-      from: state.currentUser.username,
-      to: prekeyBundle.username,
-      storedAt: stored.storedAt,
-      deliveredAt: stored.storedAt,
-      localOnly: true,
-      deliveryState: "sent",
-      deliveryError: null,
-      envelope: {
-        protocol: envelope.protocol,
-        ephemeralKey: envelope.ephemeralKey,
-        iv: envelope.iv,
-        ciphertext: envelope.ciphertext,
-        oneTimePrekeyId: envelope.oneTimePrekeyId,
-        prekeyReservationToken: envelope.prekeyReservationToken
-      },
-      decryptedPayload: {
-        subject,
-        body,
-        sentAt: messageTimestamp,
-        senderDeviceId: state.currentUser.publicBundle.deviceId
+  async function exportPrivateKeyRaw(kp) {
+    const jwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+    return new TextEncoder().encode(JSON.stringify(jwk));
+  }
+
+  async function importPrivateKeyFromRaw(raw) {
+    const jwk = JSON.parse(new TextDecoder().decode(raw));
+    return crypto.subtle.importKey(
+      "jwk", jwk, { name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]
+    );
+  }
+
+  // Derive an AES-GCM key from a password + salt via PBKDF2
+  async function pbkdf2Key(password, saltB64) {
+    const salt    = b64ToBytes(saltB64);
+    const keyMat  = await crypto.subtle.importKey(
+      "raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"]
+    );
+    return crypto.subtle.deriveKey(
+      { name: "PBKDF2", salt, iterations: 200_000, hash: "SHA-256" },
+      keyMat,
+      { name: "AES-GCM", length: 256 },
+      false, ["encrypt", "decrypt"]
+    );
+  }
+
+  // Encrypt private key bytes with the PBKDF2 wrapper key
+  async function wrapPrivateKey(kp, password) {
+    const salt       = crypto.getRandomValues(new Uint8Array(16));
+    const saltB64    = bytesToB64(salt);
+    const wrapKey    = await pbkdf2Key(password, saltB64);
+    const privRaw    = await exportPrivateKeyRaw(kp);
+    const iv         = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, wrapKey, privRaw);
+    return { salt: saltB64, iv: bytesToB64(iv), ct: bytesToB64(new Uint8Array(ciphertext)) };
+  }
+
+  async function unwrapPrivateKey(bundle, password) {
+    const wrapKey = await pbkdf2Key(password, bundle.salt);
+    const iv      = b64ToBytes(bundle.iv);
+    const ct      = b64ToBytes(bundle.ct);
+    const raw     = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, wrapKey, ct);
+    return importPrivateKeyFromRaw(new Uint8Array(raw));
+  }
+
+  // Derive the shared AES-GCM key between me and a peer (ECDH)
+  async function deriveConvKey(myPrivKey, theirPubKey) {
+    return crypto.subtle.deriveKey(
+      { name: "ECDH", public: theirPubKey },
+      myPrivKey,
+      { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]
+    );
+  }
+
+  async function aesEncrypt(key, plainBytes) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plainBytes);
+    return { iv: bytesToB64(iv), ct: bytesToB64(new Uint8Array(ct)) };
+  }
+
+  async function aesDecrypt(key, ivB64, ctB64) {
+    const iv = b64ToBytes(ivB64);
+    const ct = b64ToBytes(ctB64);
+    return crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
+  }
+
+  async function encryptMessage(convId, payload) {
+    const key   = await getSharedKey(convId);
+    const bytes = new TextEncoder().encode(JSON.stringify(payload));
+    return aesEncrypt(key, bytes);
+  }
+
+  async function decryptMessage(convId, ivB64, ctB64) {
+    const key  = await getSharedKey(convId);
+    const raw  = await aesDecrypt(key, ivB64, ctB64);
+    return JSON.parse(new TextDecoder().decode(raw));
+  }
+
+  // ── Key cache ────────────────────────────────────────────────────
+
+  async function getSharedKey(convId) {
+    if (sharedKeys.has(convId)) return sharedKeys.get(convId);
+    // Need peer's public key — fetch from conversations cache
+    const conv   = conversationsCache.find(c => c.id === convId);
+    if (!conv) throw new Error("Conversation not found: " + convId);
+    const peerPk = await getPeerPublicKey(conv.peer_id);
+    const key    = await deriveConvKey(myKeyPair.privateKey, peerPk);
+    sharedKeys.set(convId, key);
+    return key;
+  }
+
+  async function getPeerPublicKey(userId) {
+    if (peerPubKeys.has(userId)) return peerPubKeys.get(userId);
+    const res  = await apiFetch(`/api/users/${userId}/publickey`);
+    const data = await res.json();
+    const pk   = await importPublicKey(data.publicKey);
+    peerPubKeys.set(userId, pk);
+    return pk;
+  }
+
+  // ── Media crypto ─────────────────────────────────────────────────
+
+  async function encryptFile(file, convId) {
+    const convKey = await getSharedKey(convId);
+    const bytes   = await file.arrayBuffer();
+
+    // Random per-file key
+    const fileKey = await crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
+    );
+    const fileKeyRaw = await crypto.subtle.exportKey("raw", fileKey);
+
+    // Encrypt file bytes
+    const { iv: fileIv, ct: fileCt } = await aesEncrypt(fileKey, bytes);
+
+    // Encrypt the file key with the conversation key
+    const { iv: keyIv, ct: keyCt } = await aesEncrypt(convKey, new Uint8Array(fileKeyRaw));
+
+    return { fileCt, fileIv, keyIv, keyCt, name: file.name, type: file.type, size: file.size };
+  }
+
+  async function decryptFileBytes(convId, blob, fileIv, keyIv, keyCt) {
+    const convKey    = await getSharedKey(convId);
+    const fileKeyRaw = await aesDecrypt(convKey, keyIv, keyCt);
+    const fileKey    = await crypto.subtle.importKey(
+      "raw", fileKeyRaw, { name: "AES-GCM" }, false, ["decrypt"]
+    );
+    const plainBytes = await aesDecrypt(fileKey, fileIv, bytesToB64(new Uint8Array(await blob.arrayBuffer())));
+    return plainBytes;
+  }
+
+  // ── B64 utils ────────────────────────────────────────────────────
+
+  function bytesToB64(buf) {
+    return btoa(String.fromCharCode(...(buf instanceof Uint8Array ? buf : new Uint8Array(buf))));
+  }
+
+  function b64ToBytes(b64) {
+    return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  }
+
+  // ── API ──────────────────────────────────────────────────────────
+
+  async function apiFetch(url, opts = {}) {
+    const headers = { ...(opts.headers || {}) };
+    if (jwt) headers["Authorization"] = `Bearer ${jwt}`;
+    const res = await fetch(url, { ...opts, headers });
+    if (res.status === 401) { logout(); throw new Error("Session expired."); }
+    return res;
+  }
+
+  // ── Auth ─────────────────────────────────────────────────────────
+
+  async function register(username, password) {
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      const kp          = await generateKeyPair();
+      const publicKey   = await exportPublicKeyJwk(kp);
+      const encPriv     = await wrapPrivateKey(kp, password);
+
+      const res  = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password, publicKey, encPrivateKey: encPriv }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setAuthError(data.error); return; }
+
+      myKeyPair  = kp;
+      onLoginSuccess(data.token, data.userId, data.username);
+    } catch (e) {
+      setAuthError("Registration failed. Try again.");
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function login(username, password) {
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      const res  = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setAuthError(data.error); return; }
+
+      // Decrypt private key
+      let privKey;
+      try {
+        privKey = await unwrapPrivateKey(data.encPrivateKey, password);
+      } catch {
+        setAuthError("Wrong password or corrupted key.");
+        return;
       }
+
+      // Reconstruct the full keypair (we need the public key too for derivation)
+      const pubKeyRes = await fetch(`/api/users/${data.userId}/publickey`, {
+        headers: { "Authorization": `Bearer ${data.token}` },
+      });
+      const pubKeyData = await pubKeyRes.json();
+      const pubKey     = await importPublicKey(pubKeyData.publicKey);
+
+      myKeyPair = { publicKey: pubKey, privateKey: privKey };
+      onLoginSuccess(data.token, data.userId, data.username);
+    } catch (e) {
+      setAuthError("Login failed. Try again.");
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  function onLoginSuccess(token, userId, username) {
+    jwt        = token;
+    myUserId   = userId;
+    myUsername = username;
+    sessionStorage.setItem("dp_session", JSON.stringify({ jwt, myUserId, myUsername }));
+    connectWs();
+    loadConversations().then(() => showScreen("home"));
+    setStatus("connected", myUsername);
+  }
+
+  function logout() {
+    sessionStorage.removeItem("dp_session");
+    jwt = null; myUserId = null; myUsername = null;
+    myKeyPair = null; sharedKeys.clear(); peerPubKeys.clear();
+    if (ws) { ws.close(); ws = null; }
+    setStatus("offline", "e2e encrypted");
+    showScreen("auth");
+  }
+
+  // ── WebSocket ────────────────────────────────────────────────────
+
+  function connectWs() {
+    if (ws) ws.close();
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(`${proto}//${location.host}/ws?token=${jwt}`);
+    ws.onmessage = async (e) => {
+      const msg = JSON.parse(e.data);
+      switch (msg.type) {
+        case "auth_ok": break;
+        case "ack": handleAck(msg); break;
+        case "message": await handleIncomingMessage(msg); break;
+      }
+    };
+    ws.onclose = () => {
+      // Reconnect after brief delay if still logged in
+      if (jwt) setTimeout(connectWs, 3000);
+    };
+    ws.onerror = () => {};
+  }
+
+  function handleAck({ tempId, messageId }) {
+    const el = document.querySelector(`[data-temp="${tempId}"]`);
+    if (el) {
+      el.dataset.id = messageId;
+      delete el.dataset.temp;
+      el.querySelector(".msg-tick")?.classList.add("tick-sent");
+    }
+  }
+
+  async function handleIncomingMessage(msg) {
+    // Make sure we have the conversation in cache
+    let conv = conversationsCache.find(c => c.id === msg.conversationId);
+    if (!conv) {
+      await loadConversations();
+      conv = conversationsCache.find(c => c.id === msg.conversationId);
+    }
+    if (!conv) return;
+
+    // Decrypt
+    let payload;
+    try {
+      payload = await decryptMessage(msg.conversationId, msg.iv, msg.ciphertext);
+    } catch {
+      payload = { text: "[decryption failed]" };
+    }
+
+    // Update conversation list
+    renderConversationsList();
+
+    // Append to open chat if it matches
+    if (activeConvId === msg.conversationId) {
+      appendMessageEl({ ...msg, payload, incoming: true });
+      scrollChatBottom();
+    } else {
+      // Badge on the conversation item
+      const item = document.querySelector(`[data-conv-id="${msg.conversationId}"]`);
+      if (item) item.classList.add("has-unread");
+    }
+  }
+
+  // ── Conversations ────────────────────────────────────────────────
+
+  let conversationsCache = [];
+
+  async function loadConversations() {
+    const res  = await apiFetch("/api/conversations");
+    conversationsCache = await res.json();
+    renderConversationsList();
+  }
+
+  function renderConversationsList() {
+    const list = $("conv-list");
+    if (!list) return;
+    list.innerHTML = "";
+
+    if (conversationsCache.length === 0) {
+      list.innerHTML = `<p class="conv-empty">No conversations yet.<br>Search for a username to start.</p>`;
+      return;
+    }
+
+    conversationsCache.forEach(conv => {
+      const initial = (conv.peer_username || "?")[0].toUpperCase();
+      const time    = conv.last_at ? formatTime(conv.last_at * 1000) : "";
+      const el      = document.createElement("div");
+      el.className  = "conv-item" + (conv.unread > 0 ? " has-unread" : "");
+      el.dataset.convId = conv.id;
+      el.innerHTML  = `
+        <div class="conv-avatar">${initial}</div>
+        <div class="conv-info">
+          <span class="conv-name">${escHtml(conv.peer_username)}</span>
+          <span class="conv-preview">encrypted message</span>
+        </div>
+        ${time ? `<span class="conv-time">${time}</span>` : ""}
+        ${conv.unread > 0 ? `<span class="conv-badge">${conv.unread}</span>` : ""}
+      `;
+      el.addEventListener("click", () => openConversation(conv.id, conv.peer_id, conv.peer_username));
+      list.appendChild(el);
     });
-    envelopeOutput.value = state.lastEnvelope;
-    setSummary(
-      envelopeSummary,
-      `<strong>${stored.messageId}</strong><br>Stored for <strong>${prekeyBundle.username}</strong> on device <strong>${prekeyBundle.device.deviceId}</strong>`
-    );
-    copyEnvelopeButton.disabled = false;
-    setStatus(
-      envelope.oneTimePrekeyId
-        ? `Encrypted envelope stored for ${prekeyBundle.username} on device ${prekeyBundle.device.deviceId} using one-time prekey ${envelope.oneTimePrekeyId}.`
-        : `Encrypted envelope stored for ${prekeyBundle.username} on device ${prekeyBundle.device.deviceId}.`
-    );
-    return stored;
-  } catch (error) {
-    updateInboxMessage(pendingMessageId, (message) => ({
-      ...message,
-      deliveryState: "failed",
-      deliveryError: error.message || "Send failed."
-    }));
-    throw error;
-  }
-}
-
-async function fetchHealth() {
-  healthButton.disabled = true;
-  setStatus("Checking backend health...");
-
-  try {
-    const payload = await api.getHealth();
-    healthOutput.value = JSON.stringify(payload, null, 2);
-    setSummary(
-      healthSummary,
-      `<strong>${payload.status}</strong><br>${payload.accounts} account(s), ${payload.sessions} active session(s), ${payload.messages} message(s)`
-    );
-    setStatus(`Backend reachable at ${getApiBase()}.`);
-    return payload;
-  } catch (error) {
-    healthOutput.value = "";
-    setSummary(healthSummary, "Backend health check failed.", true);
-    setStatus(`Unable to reach backend at ${getApiBase()}.`, "error");
-    throw error;
-  } finally {
-    healthButton.disabled = false;
-  }
-}
-
-async function fetchBundles(username = lookupUsername.value) {
-  const normalized = normalizeUsername(username);
-  if (!normalized) {
-    setStatus("Enter a recipient username to fetch bundles.", "error");
-    return null;
   }
 
-  lookupButton.disabled = true;
-  setStatus(`Fetching public bundles for ${normalized}...`);
+  async function openConversation(convId, peerId, peerUsername) {
+    activeConvId = convId;
 
-  try {
-    const payload = await api.getBundles(normalized);
-    await renderLookupResult(payload);
-    setStatus(`Fetched ${payload.devices.length} active bundle(s) for ${payload.username}.`);
-    return payload;
-  } catch (error) {
-    await renderLookupResult(null);
-    setStatus(error.message, "error");
-    throw error;
-  } finally {
-    lookupButton.disabled = false;
-  }
-}
+    // Warm up the shared key
+    if (!sharedKeys.has(convId)) {
+      const conv = conversationsCache.find(c => c.id === convId) || { peer_id: peerId };
+      await getPeerPublicKey(conv.peer_id || peerId);
+      await getSharedKey(convId);
+    }
 
-async function fetchPrekeyBundle(username, deviceId = "") {
-  const normalized = normalizeUsername(username);
-  if (!normalized) {
-    throw new Error("Recipient username is required.");
-  }
+    // Update header
+    $("chat-peer-name").textContent = peerUsername || "…";
 
-  const body = deviceId ? { deviceId } : {};
-  const payload = await api.issuePrekeyBundle(normalized, body);
+    showScreen("chat");
+    $("chat-messages").innerHTML = "";
+    $("chat-input").focus();
 
-  await renderLookupResult({
-    username: payload.username,
-    devices: [{
-      ...payload.device,
-      oneTimePrekeys: payload.oneTimePrekey ? [payload.oneTimePrekey] : []
-    }]
-  });
-  return payload;
-}
-
-async function fetchInbox() {
-  if (!state.currentUser) {
-    setStatus("Sign in before fetching an inbox.", "error");
-    return [];
+    // Load message history
+    await loadMessages(convId);
+    scrollChatBottom();
   }
 
-  refreshInboxButton.disabled = true;
-  setStatus(`Syncing conversations for ${state.currentUser.username}...`);
+  async function startNewChat(username) {
+    if (!username || username === myUsername) return;
+    const searchRes  = await apiFetch(`/api/users/search?q=${encodeURIComponent(username)}`);
+    const results    = await searchRes.json();
+    const peer       = results.find(u => u.username.toLowerCase() === username.toLowerCase());
+    if (!peer) { setSearchError("User not found."); return; }
 
-  try {
-    const deviceId = state.currentUser.session.deviceId;
-    const conversationPayload = await api.listConversations({
-      limit: 100,
-      deviceId
+    const convRes  = await apiFetch("/api/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ peerId: peer.id }),
     });
-    const conversations = Array.isArray(conversationPayload.conversations)
-      ? conversationPayload.conversations
-      : [];
-    const historyPages = await Promise.all(
-      conversations.map((conversation) => api.getHistory({
-        correspondent: conversation.correspondent,
-        limit: 100,
-        deviceId
-      }))
-    );
-    const historyMessages = historyPages.flatMap((payload) => Array.isArray(payload.messages) ? payload.messages : []);
-    const inboxPayload = await api.getInboxPage({
-      limit: 100,
-      deviceId
-    });
-    const liveMessages = Array.isArray(inboxPayload.messages) ? inboxPayload.messages : [];
-    const mergedMessages = {};
+    const conv = await convRes.json();
 
-    for (const existing of state.inbox) {
-      if (existing.localOnly) {
-        mergedMessages[existing.messageId] = existing;
-      } else {
-        mergedMessages[existing.messageId] = {
-          ...existing,
-          decryptedPayload: existing.decryptedPayload || null,
-          decryptedAt: existing.decryptedAt || null
+    // Merge into cache
+    if (!conversationsCache.find(c => c.id === conv.id)) {
+      conversationsCache.unshift({ ...conv, peer_id: peer.id, peer_username: peer.username, unread: 0 });
+    }
+
+    closeNewChatModal();
+    openConversation(conv.id, peer.id, peer.username);
+  }
+
+  // ── Messages ─────────────────────────────────────────────────────
+
+  async function loadMessages(convId) {
+    const res  = await apiFetch(`/api/conversations/${convId}/messages`);
+    const msgs = await res.json();
+    for (const msg of msgs) {
+      let payload;
+      try {
+        payload = await decryptMessage(convId, msg.iv, msg.ciphertext);
+      } catch {
+        payload = { text: "[decryption failed]" };
+      }
+      appendMessageEl({ ...msg, payload, incoming: msg.sender_id !== myUserId });
+    }
+  }
+
+  let tempIdCounter = 0;
+
+  async function sendMessage() {
+    const input  = $("chat-input");
+    const text   = input.value.trim();
+    if (!text && !pendingMediaData) return;
+    if (!activeConvId) return;
+
+    input.value = "";
+    autoResize(input);
+
+    const payload = { text: text || "" };
+    let mediaUploadId = null;
+
+    if (pendingMediaData) {
+      const { encData, meta, convId } = pendingMediaData;
+      // Upload encrypted bytes
+      const bytes   = b64ToBytes(encData.fileCt);
+      const upRes   = await apiFetch(`/api/media?convId=${convId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: bytes,
+      });
+      if (upRes.ok) {
+        const { mediaId } = await upRes.json();
+        mediaUploadId = mediaId;
+        payload.media = {
+          mediaId,
+          fileIv: encData.fileIv,
+          keyIv:  encData.keyIv,
+          keyCt:  encData.keyCt,
+          name:   meta.name,
+          type:   meta.type,
+          size:   meta.size,
         };
       }
+      clearMediaPreview();
     }
 
-    for (const message of historyMessages) {
-      const existing = mergedMessages[message.messageId];
-      mergedMessages[message.messageId] = {
-        ...existing,
-        ...message,
-        decryptedPayload: existing?.decryptedPayload || null,
-        decryptedAt: existing?.decryptedAt || null
-      };
-    }
+    const { iv, ct } = await encryptMessage(activeConvId, payload);
 
-    for (const message of liveMessages) {
-      const existing = mergedMessages[message.messageId];
-      mergedMessages[message.messageId] = {
-        ...existing,
-        ...message,
-        decryptedPayload: existing?.decryptedPayload || null,
-        decryptedAt: existing?.decryptedAt || null
-      };
-    }
+    const tempId = ++tempIdCounter;
+    const now    = Date.now();
 
-    const liveMessageEntries = Object.values(mergedMessages).filter((entry) => !entry.localOnly);
-    for (const [messageId, message] of Object.entries(mergedMessages)) {
-      if (!message.localOnly || message.deliveryState === "failed") {
-        continue;
-      }
-
-      const replacement = liveMessageEntries.find((entry) => isSameMessageContent(entry, message));
-      if (replacement) {
-        delete mergedMessages[messageId];
-      }
-    }
-
-    const nextMessages = Object.values(mergedMessages).sort((left, right) => {
-      const leftTime = new Date(left.storedAt || 0).getTime();
-      const rightTime = new Date(right.storedAt || 0).getTime();
-      return leftTime - rightTime;
+    // Optimistic render
+    appendMessageEl({
+      id:             null,
+      conversation_id: activeConvId,
+      sender_id:      myUserId,
+      payload,
+      incoming:       false,
+      created_at:     Math.floor(now / 1000),
+      tempId,
     });
+    scrollChatBottom();
 
-    renderInbox(nextMessages, conversations);
-    setStatus(`Synced ${conversations.length} conversation(s) and ${liveMessages.length} queued inbox item(s) for ${deviceId}.`);
-    return nextMessages;
-  } catch (error) {
-    renderInbox([], []);
-    setStatus(error.message, "error");
-    throw error;
-  } finally {
-    refreshInboxButton.disabled = false;
-  }
-}
-
-async function fetchDevices() {
-  if (!state.currentUser) {
-    setStatus("Sign in before loading account devices.", "error");
-    return [];
-  }
-
-  refreshDevicesButton.disabled = true;
-  setStatus(`Fetching devices for ${state.currentUser.username}...`);
-
-  try {
-    const payload = await api.listDevices();
-    renderDevices(payload);
-    setStatus(`Fetched ${payload.devices.length} device record(s) for ${payload.username}.`);
-    return payload.devices || [];
-  } catch (error) {
-    renderDevices(null);
-    setStatus(error.message, "error");
-    throw error;
-  } finally {
-    refreshDevicesButton.disabled = false;
-  }
-}
-
-async function createAccount() {
-  const username = normalizeUsername(signupUsername.value);
-  const password = signupPassword.value;
-
-  if (!username || !password) {
-    setStatus("Enter a username and password to create an account.", "error");
-    return;
-  }
-
-  signupButton.disabled = true;
-  setStatus("Generating local device keys and registering the account...");
-
-  try {
-    const deviceBundle = await generateDeviceBundle();
-    const passwordVerifier = await sha256(password);
-    const payload = await apiRequest("/v1/accounts", {
-      method: "POST",
-      body: JSON.stringify({
-        username,
-        passwordVerifier,
-        device: deviceBundle.publicBundle
-      })
-    });
-
-    const localRecord = await serializeLocalDeviceRecord(username, passwordVerifier, payload.accountId, deviceBundle);
-    storeLocalDevice(localRecord);
-    renderLocalDeviceOptions(username);
-    const hydrated = await hydrateLocalDevice(localRecord);
-
-    state.currentUser = {
-      accountId: payload.accountId,
-      username: payload.username,
-      session: payload.session,
-      passwordVerifier,
-      publicBundle: hydrated.publicBundle,
-      privateKeys: hydrated.privateKeys
-    };
-    state.currentUsername = payload.username;
-
-    renderSession();
-    renderInbox([]);
-    renderDevices({
-      username: payload.username,
-      devices: [{
-        ...hydrated.publicBundle,
-        oneTimePrekeys: hydrated.publicBundle.oneTimePrekeys || [],
-        registeredAt: new Date().toISOString(),
-        revokedAt: null
-      }]
-    });
-    plaintextOutput.value = "";
-    setStatus(`Account ${payload.username} created and this browser registered as device ${payload.session.deviceId}.`);
-    return payload;
-  } catch (error) {
-    setStatus(error.message, "error");
-    throw error;
-  } finally {
-    signupButton.disabled = false;
-  }
-}
-
-async function signIn() {
-  const username = normalizeUsername(signupUsername.value);
-  const password = signupPassword.value;
-
-  if (!username || !password) {
-    setStatus("Enter a username and password to sign in.", "error");
-    return;
-  }
-
-  loginButton.disabled = true;
-  setStatus(`Authenticating ${username} against the backend...`);
-
-  try {
-    const passwordVerifier = await sha256(password);
-    const localRecord = getLocalDevice(username, localDeviceSelect.value);
-
-    if (!localRecord) {
-      throw new Error("No local device keys are stored for this account in this browser. Create the account here or import a device before signing in.");
+    // Send via WebSocket
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type:           "send",
+        tempId,
+        conversationId: activeConvId,
+        iv,
+        ciphertext:     ct,
+        mediaId:        mediaUploadId,
+      }));
     }
+  }
 
-    if (localRecord.passwordVerifier !== passwordVerifier) {
-      throw new Error("Password does not match the verifier stored for this local device.");
+  let pendingMediaData = null;
+
+  async function handleFileSelected(file) {
+    if (!file || !activeConvId) return;
+    if (file.size > 25 * 1024 * 1024) { alert("Max file size is 25 MB."); return; }
+
+    showMediaLoading(true);
+    try {
+      const encData = await encryptFile(file, activeConvId);
+      pendingMediaData = { encData, meta: { name: file.name, type: file.type, size: file.size }, convId: activeConvId };
+      showMediaPreview(file);
+    } catch {
+      alert("Failed to encrypt file.");
+    } finally {
+      showMediaLoading(false);
     }
-
-    const payload = await apiRequest("/v1/sessions", {
-      method: "POST",
-      body: JSON.stringify({
-        username,
-        passwordVerifier,
-        deviceId: localRecord.deviceId
-      })
-    });
-
-    const hydrated = await hydrateLocalDevice(localRecord);
-    state.currentUser = {
-      accountId: payload.accountId,
-      username: payload.username,
-      session: payload.session,
-      passwordVerifier,
-      publicBundle: hydrated.publicBundle,
-      privateKeys: hydrated.privateKeys
-    };
-    state.currentUsername = payload.username;
-
-    renderSession();
-    plaintextOutput.value = "";
-    await fetchDevices();
-    await fetchInbox();
-    setStatus(`Signed in as ${payload.username} on local device ${payload.session.deviceId}.`);
-    return payload;
-  } catch (error) {
-    setStatus(error.message, "error");
-    throw error;
-  } finally {
-    loginButton.disabled = false;
-  }
-}
-
-async function encryptForRecipient(sender, recipientBundle, subject, body) {
-  const recipientDevice = recipientBundle.device;
-  const ephemeral = await crypto.subtle.generateKey(
-    { name: "ECDH", namedCurve: "P-256" },
-    true,
-    ["deriveBits"]
-  );
-  const ephemeralPublic = await crypto.subtle.exportKey("jwk", ephemeral.publicKey);
-  const sharedSecrets = [await deriveSharedSecret(ephemeral.privateKey, recipientDevice.signedPrekey)];
-  let oneTimePrekeyId = null;
-  if (recipientBundle.oneTimePrekey && recipientBundle.oneTimePrekey.key) {
-    sharedSecrets.push(await deriveSharedSecret(ephemeral.privateKey, recipientBundle.oneTimePrekey.key));
-    oneTimePrekeyId = recipientBundle.oneTimePrekey.keyId || null;
   }
 
-  const aesKey = await deriveAesKey(sharedSecrets);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const payload = {
-    subject,
-    body,
-    sentAt: new Date().toISOString(),
-    senderDeviceId: sender.publicBundle.deviceId
-  };
-  const plaintext = new TextEncoder().encode(JSON.stringify(payload));
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aesKey, plaintext);
-
-  return {
-    protocol: "deadp0et-envelope-v1",
-    from: sender.username,
-    to: recipientDevice.username,
-    envelopeId: crypto.randomUUID(),
-    recipientDeviceId: recipientDevice.deviceId,
-    oneTimePrekeyId,
-    prekeyReservationToken: recipientBundle.prekeyReservationToken,
-    ephemeralKey: ephemeralPublic,
-    iv: bytesToBase64(iv),
-    ciphertext: bytesToBase64(new Uint8Array(ciphertext))
-  };
-}
-
-async function sendMessage() {
-  if (!state.currentUser) {
-    setStatus("Create or sign in to an account before sending messages.", "error");
-    return;
+  function clearMediaPreview() {
+    pendingMediaData = null;
+    const preview = $("media-preview");
+    if (preview) preview.innerHTML = "";
+    const wrap = $("media-preview-wrap");
+    if (wrap) wrap.hidden = true;
   }
 
-  const to = normalizeUsername(recipientUsername.value);
-  const subject = messageSubject.value.trim();
-  const body = messageBody.value.trim();
+  function showMediaPreview(file) {
+    const wrap    = $("media-preview-wrap");
+    const preview = $("media-preview");
+    if (!wrap || !preview) return;
+    wrap.hidden = false;
 
-  if (!to || !subject || !body) {
-    setStatus("Recipient, subject, and message body are all required.", "error");
-    return;
-  }
-
-  if (to === state.currentUser.username) {
-    setStatus("Send to a different account so the device bundle lookup path is exercised.", "error");
-    return;
-  }
-
-  sendButton.disabled = true;
-  setStatus(`Reserving recipient prekey bundle for ${to} and encrypting locally...`);
-
-  try {
-    const prekeyBundle = await fetchPrekeyBundle(to);
-    if (!prekeyBundle || !prekeyBundle.device) {
-      throw new Error("Recipient has no active prekey bundle.");
-    }
-    const trust = await assessDeviceTrust(prekeyBundle.username, prekeyBundle.device);
-    if (!trust.trusted) {
-      throw new Error(
-        `Recipient device keys changed for ${prekeyBundle.device.deviceId}. Review safety number in Bundle Lookup and click "Trust Current Device Keys" before sending.`
-      );
-    }
-    return await deliverPreparedMessage(prekeyBundle, subject, body);
-  } catch (error) {
-    setStatus(error.message, "error");
-    throw error;
-  } finally {
-    sendButton.disabled = false;
-  }
-}
-
-async function retryFailedMessage(messageId) {
-  if (!state.currentUser) {
-    setStatus("Sign in before retrying failed sends.", "error");
-    return;
-  }
-
-  const message = getInboxMessageById(messageId);
-  if (!message || !message.localOnly || message.deliveryState !== "failed") {
-    setStatus("That message is not available for retry.", "error");
-    return;
-  }
-
-  const subject = message.decryptedPayload?.subject?.trim() || "";
-  const body = message.decryptedPayload?.body?.trim() || "";
-  const to = normalizeUsername(message.to || "");
-  if (!to || !subject || !body) {
-    setStatus("Failed message is missing recipient or plaintext content.", "error");
-    return;
-  }
-
-  setStatus(`Retrying failed send to ${to}...`);
-  const prekeyBundle = await fetchPrekeyBundle(to);
-  if (!prekeyBundle || !prekeyBundle.device) {
-    throw new Error("Recipient has no active prekey bundle.");
-  }
-  const trust = await assessDeviceTrust(prekeyBundle.username, prekeyBundle.device);
-  if (!trust.trusted) {
-    throw new Error(
-      `Recipient device keys changed for ${prekeyBundle.device.deviceId}. Review safety number in Bundle Lookup and click "Trust Current Device Keys" before retrying.`
-    );
-  }
-
-  return deliverPreparedMessage(prekeyBundle, subject, body, messageId);
-}
-
-async function decryptLatest() {
-  if (!state.currentUser) {
-    setStatus("Sign in before trying to decrypt inbox messages.", "error");
-    return;
-  }
-
-  const selectedMessage = getSelectedInboxMessage();
-  if (!selectedMessage) {
-    setStatus("No messages are waiting for this device.", "error");
-    return;
-  }
-
-  try {
-    const sharedSecrets = [await deriveSharedSecret(
-      state.currentUser.privateKeys.signedPrekeyPrivateKey,
-      selectedMessage.envelope.ephemeralKey
-    )];
-    const oneTimePrekeyId = typeof selectedMessage.envelope.oneTimePrekeyId === "string" ? selectedMessage.envelope.oneTimePrekeyId.trim() : "";
-    if (oneTimePrekeyId) {
-      const oneTimePrekeyPrivateKey = state.currentUser.privateKeys.oneTimePrekeyPrivateKeys?.[oneTimePrekeyId];
-      if (!oneTimePrekeyPrivateKey) {
-        throw new Error("Missing local one-time prekey private key required for this envelope.");
-      }
-      sharedSecrets.push(await deriveSharedSecret(oneTimePrekeyPrivateKey, selectedMessage.envelope.ephemeralKey));
-    }
-
-    const aesKey = await deriveAesKey(sharedSecrets);
-    const plaintext = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: base64ToBytes(selectedMessage.envelope.iv) },
-      aesKey,
-      base64ToBytes(selectedMessage.envelope.ciphertext)
-    );
-    const decoded = JSON.parse(new TextDecoder().decode(plaintext));
-    const ackPayload = {
-      messageIds: [selectedMessage.messageId]
-    };
-    if (oneTimePrekeyId) {
-      ackPayload.oneTimePrekeyProofs = [{
-        messageId: selectedMessage.messageId,
-        oneTimePrekeyId
-      }];
-    }
-    await apiRequest("/v1/messages/inbox/ack", {
-      method: "POST",
-      body: JSON.stringify(ackPayload)
-    });
-
-    if (oneTimePrekeyId) {
-      delete state.currentUser.privateKeys.oneTimePrekeyPrivateKeys[oneTimePrekeyId];
-      consumeLocalOneTimePrekey(state.currentUser.username, state.currentUser.publicBundle.deviceId, oneTimePrekeyId);
-    }
-    updateInboxMessage(selectedMessage.messageId, (message) => ({
-      ...message,
-      decryptedPayload: decoded,
-      decryptedAt: new Date().toISOString()
-    }));
-    plaintextOutput.value = JSON.stringify(decoded, null, 2);
-    setSummary(
-      plaintextSummary,
-      `<strong>${decoded.subject}</strong><br>From device <strong>${decoded.senderDeviceId}</strong><br>${decoded.body}`
-    );
-    setStatus(
-      oneTimePrekeyId
-        ? `Selected message from ${selectedMessage.from} decrypted locally on device ${state.currentUser.session.deviceId} using one-time prekey ${oneTimePrekeyId}.`
-        : `Selected message from ${selectedMessage.from} decrypted locally on device ${state.currentUser.session.deviceId}.`
-    );
-  } catch (error) {
-    plaintextOutput.value = "";
-    setSummary(plaintextSummary, "Unable to decrypt the selected message with the current local device key.", true);
-    setStatus("Unable to decrypt the selected envelope with the locally stored device key.", "error");
-    throw error;
-  }
-}
-
-async function copyLastEnvelope() {
-  if (!state.lastEnvelope) {
-    return;
-  }
-
-  try {
-    await navigator.clipboard.writeText(state.lastEnvelope);
-    setStatus("Last encrypted envelope copied to the clipboard.");
-  } catch (error) {
-    setStatus("Clipboard access was blocked. Copy the envelope manually.", "error");
-  }
-}
-
-async function registerAdditionalDevice() {
-  if (!state.currentUser) {
-    setStatus("Sign in before registering an additional device.", "error");
-    return;
-  }
-
-  addDeviceButton.disabled = true;
-  setStatus("Generating another device bundle in this browser...");
-
-  try {
-    const deviceBundle = await generateDeviceBundle();
-    await apiRequest("/v1/devices", {
-      method: "POST",
-      body: JSON.stringify({
-        device: deviceBundle.publicBundle
-      })
-    });
-
-    const localRecord = await serializeLocalDeviceRecord(
-      state.currentUser.username,
-      state.currentUser.passwordVerifier || "",
-      state.currentUser.accountId,
-      deviceBundle
-    );
-    storeLocalDevice(localRecord);
-    renderLocalDeviceOptions(state.currentUser.username);
-    deviceActionId.value = deviceBundle.publicBundle.deviceId;
-    localDeviceSelect.value = deviceBundle.publicBundle.deviceId;
-    await fetchDevices();
-    setStatus(`Registered additional device ${deviceBundle.publicBundle.deviceId}. Its private keys remain only in this browser unless exported separately.`);
-  } catch (error) {
-    setStatus(error.message, "error");
-    throw error;
-  } finally {
-    addDeviceButton.disabled = false;
-  }
-}
-
-async function applyDeviceAction() {
-  if (!state.currentUser) {
-    setStatus("Sign in before managing devices.", "error");
-    return;
-  }
-
-  const targetDeviceId = deviceActionId.value.trim();
-  const mode = deviceActionMode.value;
-
-  if (!targetDeviceId) {
-    setStatus("Enter a device ID before applying a device action.", "error");
-    return;
-  }
-
-  applyDeviceActionButton.disabled = true;
-  setStatus(`${mode === "rotate" ? "Rotating prekeys for" : "Revoking"} ${targetDeviceId}...`);
-
-  try {
-    if (mode === "rotate") {
-      const deviceBundle = await generateDeviceBundle();
-      await apiRequest("/v1/prekeys/rotate", {
-        method: "POST",
-        body: JSON.stringify({
-          deviceId: targetDeviceId,
-          signedPrekey: deviceBundle.publicBundle.signedPrekey,
-          prekeySignature: deviceBundle.publicBundle.prekeySignature,
-          oneTimePrekeys: deviceBundle.publicBundle.oneTimePrekeys || []
-        })
-      });
-      setStatus(`Rotated prekeys for device ${targetDeviceId}.`);
+    if (file.type.startsWith("image/")) {
+      const url  = URL.createObjectURL(file);
+      const img  = document.createElement("img");
+      img.src    = url;
+      img.className = "media-thumb";
+      preview.innerHTML = "";
+      preview.appendChild(img);
     } else {
-      await apiRequest(`/v1/devices/${encodeURIComponent(targetDeviceId)}`, {
-        method: "DELETE",
-        headers: {}
-      });
-      setStatus(`Revoked device ${targetDeviceId}.`);
+      preview.innerHTML = `<span class="media-file-chip">📎 ${escHtml(file.name)}</span>`;
+    }
+  }
+
+  function showMediaLoading(on) {
+    const btn = $("btn-attach");
+    if (btn) btn.disabled = on;
+  }
+
+  function appendMessageEl({ id, sender_id, payload, incoming, created_at, tempId }) {
+    const list = $("chat-messages");
+    if (!list) return;
+
+    const wrap = document.createElement("div");
+    wrap.className = `msg ${incoming ? "msg-them" : "msg-me"}`;
+    if (tempId) wrap.dataset.temp = tempId;
+    if (id)     wrap.dataset.id   = id;
+
+    const bubble = document.createElement("div");
+    bubble.className = "msg-bubble";
+
+    if (payload.media) {
+      bubble.appendChild(buildMediaEl(payload.media, incoming));
     }
 
-    await fetchDevices();
-  } catch (error) {
-    setStatus(error.message, "error");
-    throw error;
-  } finally {
-    applyDeviceActionButton.disabled = false;
-  }
-}
+    if (payload.text) {
+      const textEl = document.createElement("span");
+      textEl.className = "msg-text";
+      textEl.textContent = payload.text;
+      bubble.appendChild(textEl);
+    }
 
-async function exportSelectedDevice() {
-  const username = normalizeUsername(signupUsername.value || state.currentUser?.username || "");
-  const record = getLocalDevice(username, localDeviceSelect.value);
+    const footer = document.createElement("div");
+    footer.className = "msg-footer";
+    footer.innerHTML = `<span class="msg-ts">${formatTime(created_at * 1000)}</span>`;
+    if (!incoming) {
+      footer.innerHTML += `<span class="msg-tick ${id ? "tick-sent" : ""}">✓</span>`;
+    }
 
-  if (!record) {
-    setStatus("No local device is selected for export.", "error");
-    return;
-  }
-
-  const payload = JSON.stringify(record, null, 2);
-  devicePortabilityOutput.value = payload;
-  setSummary(
-    devicePortabilitySummary,
-    `<strong>Ready to export</strong><br>Local device <strong>${record.deviceId}</strong> for <strong>${record.username}</strong>`
-  );
-
-  try {
-    await navigator.clipboard.writeText(payload);
-    setStatus(`Exported local device ${record.deviceId} to the portability panel and clipboard.`);
-  } catch (error) {
-    setStatus(`Exported local device ${record.deviceId} to the portability panel.`);
-  }
-}
-
-function validateImportedRecord(record) {
-  if (!record || typeof record !== "object") {
-    throw new Error("Imported device payload must be a JSON object.");
-  }
-  if (!record.username || !record.deviceId || !record.accountId) {
-    throw new Error("Imported device payload is missing username, accountId, or deviceId.");
-  }
-  if (!record.publicBundle || !record.privateKeys) {
-    throw new Error("Imported device payload is missing publicBundle or privateKeys.");
-  }
-  if (!record.privateKeys.identityPrivateKey || !record.privateKeys.signedPrekeyPrivateKey) {
-    throw new Error("Imported device payload is missing private key material.");
-  }
-}
-
-async function importDevicePayload() {
-  const raw = devicePortabilityOutput.value.trim();
-  if (!raw) {
-    setStatus("Paste an exported device payload before importing.", "error");
-    return;
+    wrap.appendChild(bubble);
+    wrap.appendChild(footer);
+    list.appendChild(wrap);
   }
 
-  let record;
-  try {
-    record = JSON.parse(raw);
-    validateImportedRecord(record);
-  } catch (error) {
-    setStatus(error.message || "Imported device payload is not valid JSON.", "error");
-    throw error;
+  function buildMediaEl(media, incoming) {
+    const wrap = document.createElement("div");
+    wrap.className = "msg-media";
+
+    if (media.type && media.type.startsWith("image/")) {
+      const btn = document.createElement("button");
+      btn.className = "msg-media-load";
+      btn.textContent = `🔒 ${escHtml(media.name || "image")}  ·  tap to decrypt`;
+      btn.addEventListener("click", async () => {
+        btn.disabled   = true;
+        btn.textContent = "Decrypting…";
+        try {
+          const response  = await apiFetch(`/api/media/${media.mediaId}`);
+          const blob      = await response.blob();
+          const plainBuf  = await decryptFileBytes(
+            activeConvId, blob, media.fileIv, media.keyIv, media.keyCt
+          );
+          const imgUrl = URL.createObjectURL(new Blob([plainBuf], { type: media.type }));
+          const img    = document.createElement("img");
+          img.src      = imgUrl;
+          img.className = "msg-media-img";
+          wrap.replaceChild(img, btn);
+        } catch {
+          btn.textContent = "⚠ Decryption failed";
+        }
+      });
+      wrap.appendChild(btn);
+    } else {
+      const btn  = document.createElement("button");
+      btn.className = "msg-media-load";
+      btn.textContent = `📎 ${escHtml(media.name || "file")} — tap to decrypt & download`;
+      btn.addEventListener("click", async () => {
+        btn.disabled   = true;
+        btn.textContent = "Decrypting…";
+        try {
+          const response = await apiFetch(`/api/media/${media.mediaId}`);
+          const blob     = await response.blob();
+          const plain    = await decryptFileBytes(
+            activeConvId, blob, media.fileIv, media.keyIv, media.keyCt
+          );
+          const a   = document.createElement("a");
+          a.href    = URL.createObjectURL(new Blob([plain], { type: media.type || "application/octet-stream" }));
+          a.download = media.name || "file";
+          a.click();
+          btn.textContent = `✓ ${escHtml(media.name || "file")}`;
+        } catch {
+          btn.textContent = "⚠ Decryption failed";
+        }
+      });
+      wrap.appendChild(btn);
+    }
+
+    return wrap;
   }
 
-  storeLocalDevice(record);
-  signupUsername.value = record.username;
-  renderLocalDeviceOptions(record.username);
-  localDeviceSelect.value = record.deviceId;
-  setSummary(
-    devicePortabilitySummary,
-    `<strong>Imported local device</strong><br><strong>${record.deviceId}</strong> for <strong>${record.username}</strong>`
-  );
-  setStatus(`Imported local device ${record.deviceId} for ${record.username}. Enter the account password to sign in with it.`);
-}
+  // ── UI helpers ───────────────────────────────────────────────────
 
-async function bootstrapDemoUsers() {
-  bootstrapButton.disabled = true;
-  setStatus("Creating demo users iris and noor through the live API...");
-
-  try {
-    apiBaseInput.value = getApiBase();
-
-    signupUsername.value = "iris";
-    signupPassword.value = "lantern";
-    await createAccount();
-
-    signupUsername.value = "noor";
-    signupPassword.value = "lantern";
-    await createAccount();
-
-    signupUsername.value = "iris";
-    signupPassword.value = "lantern";
-    await signIn();
-
-    recipientUsername.value = "noor";
-    lookupUsername.value = "noor";
-    messageSubject.value = "First secure hello";
-    messageBody.value = "The backend receives only the envelope. This browser retains the private device key.";
-    await fetchBundles("noor");
-    await fetchDevices();
-    setStatus("Demo users created through the backend. Signed in as iris and ready to send to noor.");
-  } catch (error) {
-    setStatus(error.message, "error");
-    throw error;
-  } finally {
-    bootstrapButton.disabled = false;
-  }
-}
-
-saveApiButton.addEventListener("click", () => {
-  saveApiBase();
-});
-
-healthButton.addEventListener("click", () => {
-  fetchHealth().catch((error) => setStatus(error.message, "error"));
-});
-
-signupButton.addEventListener("click", () => {
-  createAccount().catch((error) => setStatus(error.message, "error"));
-});
-
-loginButton.addEventListener("click", () => {
-  signIn().catch((error) => setStatus(error.message, "error"));
-});
-
-bootstrapButton.addEventListener("click", () => {
-  bootstrapDemoUsers().catch((error) => setStatus(error.message, "error"));
-});
-
-lookupButton.addEventListener("click", () => {
-  fetchBundles().catch((error) => setStatus(error.message, "error"));
-});
-
-refreshDevicesButton.addEventListener("click", () => {
-  fetchDevices().catch((error) => setStatus(error.message, "error"));
-});
-
-addDeviceButton.addEventListener("click", () => {
-  registerAdditionalDevice().catch((error) => setStatus(error.message, "error"));
-});
-
-applyDeviceActionButton.addEventListener("click", () => {
-  applyDeviceAction().catch((error) => setStatus(error.message, "error"));
-});
-
-devicesSummary.addEventListener("click", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) {
-    return;
-  }
-  if (target.id !== "replenish-local-prekeys-inline") {
-    return;
+  function showScreen(name) {
+    document.querySelectorAll(".screen").forEach(s => {
+      s.classList.toggle("active", s.id === `screen-${name}`);
+    });
   }
 
-  const localDeviceId = state.currentUser?.publicBundle?.deviceId;
-  if (!localDeviceId) {
-    setStatus("Local device is not available.", "error");
-    return;
-  }
-  replenishLocalPrekeys(localDeviceId).catch((error) => setStatus(error.message, "error"));
-});
-
-exportDeviceButton.addEventListener("click", () => {
-  exportSelectedDevice().catch((error) => setStatus(error.message, "error"));
-});
-
-importDeviceButton.addEventListener("click", () => {
-  importDevicePayload().catch((error) => setStatus(error.message, "error"));
-});
-
-sendButton.addEventListener("click", () => {
-  sendMessage().catch((error) => setStatus(error.message, "error"));
-});
-
-copyEnvelopeButton.addEventListener("click", () => {
-  copyLastEnvelope().catch((error) => setStatus(error.message, "error"));
-});
-
-refreshInboxButton.addEventListener("click", () => {
-  fetchInbox().catch((error) => setStatus(error.message, "error"));
-});
-
-decryptSelectedButton.addEventListener("click", () => {
-  decryptLatest().catch((error) => setStatus(error.message, "error"));
-});
-
-signupUsername.addEventListener("input", () => {
-  renderLocalDeviceOptions(signupUsername.value);
-});
-
-bundleSummary.addEventListener("click", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) {
-    return;
-  }
-  if (target.getAttribute("data-action") !== "trust-device") {
-    return;
+  function setStatus(state, label) {
+    const badge  = $("header-badge");
+    const status = badge.closest(".header-status") || badge.parentElement;
+    badge.textContent = label;
+    status.className  = `header-status s-${state}`;
   }
 
-  const username = target.getAttribute("data-username") || "";
-  const deviceId = target.getAttribute("data-device-id") || "";
-  const payload = state.lookupCache;
-  const device = payload?.devices?.find((entry) => entry.deviceId === deviceId);
-  if (!username || !device) {
-    setStatus("Unable to locate the selected device in lookup cache.", "error");
-    return;
+  function setAuthError(msg) {
+    const el = $("auth-error");
+    if (el) { el.textContent = msg; el.hidden = !msg; }
   }
 
-  trustCurrentDeviceFingerprint(username, device)
-    .then(() => renderLookupResult(payload))
-    .then(() => setStatus(`Trusted current keys for ${normalizeUsername(username)} device ${deviceId}.`))
-    .catch((error) => setStatus(error.message, "error"));
-});
+  function setAuthLoading(on) {
+    const btn = $("btn-auth-submit");
+    if (btn) { btn.disabled = on; btn.textContent = on ? "…" : authMode === "login" ? "Sign In" : "Create Account"; }
+  }
 
-window.__deadp0etRetryFailedMessage = (messageId) => {
-  retryFailedMessage(messageId).catch((error) => setStatus(error.message, "error"));
-};
+  function setSearchError(msg) {
+    const el = $("search-error");
+    if (el) { el.textContent = msg; el.hidden = !msg; }
+  }
 
-apiBaseInput.value = localStorage.getItem(STORAGE_KEYS.apiBase) || getDefaultApiBase();
-renderLocalDeviceOptions("");
-renderLookupResult(null);
-renderSession();
-renderInbox([]);
-renderDevices(null);
-setSummary(healthSummary, "No health check has been run yet.", true);
-setSummary(envelopeSummary, "No envelope has been sent yet.", true);
-setSummary(plaintextSummary, "No message decrypted yet.", true);
-healthOutput.value = "Use Check health to verify the backend endpoint.";
+  function openNewChatModal() {
+    const m = $("modal-new-chat");
+    if (m) { m.hidden = false; $("new-chat-input").focus(); }
+  }
+
+  function closeNewChatModal() {
+    const m = $("modal-new-chat");
+    if (m) { m.hidden = true; $("new-chat-input").value = ""; setSearchError(""); }
+  }
+
+  function scrollChatBottom() {
+    const list = $("chat-messages");
+    if (list) list.scrollTop = list.scrollHeight;
+  }
+
+  function autoResize(el) {
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+  }
+
+  function formatTime(ms) {
+    const d   = new Date(ms);
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) {
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // ── Auth mode toggle ─────────────────────────────────────────────
+
+  let authMode = "login";
+
+  function setAuthMode(mode) {
+    authMode = mode;
+    $("auth-toggle-login").classList.toggle("active", mode === "login");
+    $("auth-toggle-register").classList.toggle("active", mode === "register");
+    $("btn-auth-submit").textContent = mode === "login" ? "Sign In" : "Create Account";
+    setAuthError("");
+  }
+
+  // ── Init ─────────────────────────────────────────────────────────
+
+  async function init() {
+    // Try session restore
+    const saved = sessionStorage.getItem("dp_session");
+    if (saved) {
+      try {
+        const s = JSON.parse(saved);
+        // Session exists but private key is not in sessionStorage (it can't be serialized)
+        // Show a re-auth prompt to re-derive the key
+        jwt = s.jwt; myUserId = s.myUserId; myUsername = s.myUsername;
+        showScreen("unlock");
+        $("unlock-username").textContent = myUsername;
+        return;
+      } catch { sessionStorage.removeItem("dp_session"); }
+    }
+
+    setStatus("offline", "e2e encrypted");
+    showScreen("auth");
+
+    // Auth form
+    $("auth-toggle-login").addEventListener("click", () => setAuthMode("login"));
+    $("auth-toggle-register").addEventListener("click", () => setAuthMode("register"));
+
+    $("btn-auth-submit").addEventListener("click", async () => {
+      const username = $("auth-username").value.trim();
+      const password = $("auth-password").value;
+      if (authMode === "login") await login(username, password);
+      else await register(username, password);
+    });
+
+    ["auth-username", "auth-password"].forEach(id => {
+      $(id).addEventListener("keydown", e => { if (e.key === "Enter") $("btn-auth-submit").click(); });
+    });
+
+    // Unlock screen (session restore — re-derive key from password)
+    $("btn-unlock").addEventListener("click", async () => {
+      const password = $("unlock-password").value;
+      $("btn-unlock").disabled = true;
+      try {
+        const res  = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: myUsername, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) { $("unlock-error").textContent = data.error; $("unlock-error").hidden = false; return; }
+
+        const privKey = await unwrapPrivateKey(data.encPrivateKey, password);
+        const pkRes   = await fetch(`/api/users/${data.userId}/publickey`, {
+          headers: { "Authorization": `Bearer ${jwt}` },
+        });
+        const pkData  = await pkRes.json();
+        const pubKey  = await importPublicKey(pkData.publicKey);
+        myKeyPair = { publicKey: pubKey, privateKey: privKey };
+        jwt = data.token;
+        connectWs();
+        await loadConversations();
+        showScreen("home");
+        setStatus("connected", myUsername);
+      } catch { $("unlock-error").textContent = "Failed. Try again."; $("unlock-error").hidden = false; }
+      finally  { $("btn-unlock").disabled = false; }
+    });
+
+    $("unlock-password").addEventListener("keydown", e => { if (e.key === "Enter") $("btn-unlock").click(); });
+    $("btn-unlock-logout").addEventListener("click", () => { sessionStorage.clear(); logout(); });
+
+    // Home screen
+    $("btn-new-chat").addEventListener("click", openNewChatModal);
+    $("btn-logout").addEventListener("click", logout);
+
+    // New chat modal
+    $("btn-modal-close").addEventListener("click", closeNewChatModal);
+    $("btn-modal-start").addEventListener("click", async () => {
+      const u = $("new-chat-input").value.trim();
+      if (u) await startNewChat(u);
+    });
+    $("new-chat-input").addEventListener("keydown", e => { if (e.key === "Enter") $("btn-modal-start").click(); });
+    $("modal-new-chat").addEventListener("click", e => { if (e.target === $("modal-new-chat")) closeNewChatModal(); });
+
+    // Chat screen
+    $("btn-back").addEventListener("click", () => {
+      activeConvId = null;
+      loadConversations().then(() => showScreen("home"));
+    });
+
+    const chatInput = $("chat-input");
+    chatInput.addEventListener("keydown", e => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+    chatInput.addEventListener("input", () => autoResize(chatInput));
+
+    $("btn-send").addEventListener("click", sendMessage);
+
+    $("btn-attach").addEventListener("click", () => $("file-input").click());
+    $("file-input").addEventListener("change", e => {
+      const f = e.target.files[0];
+      if (f) handleFileSelected(f);
+      e.target.value = "";
+    });
+
+    $("btn-media-cancel").addEventListener("click", clearMediaPreview);
+
+    // Drag-and-drop on chat
+    const chatArea = $("screen-chat");
+    chatArea.addEventListener("dragover", e => e.preventDefault());
+    chatArea.addEventListener("drop", e => {
+      e.preventDefault();
+      const f = e.dataTransfer.files[0];
+      if (f) handleFileSelected(f);
+    });
+  }
+
+  return { init };
+})();
+
+document.addEventListener("DOMContentLoaded", App.init);
