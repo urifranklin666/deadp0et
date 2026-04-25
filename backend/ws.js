@@ -1,4 +1,5 @@
-const jwt = require("jsonwebtoken");
+const jwt  = require("jsonwebtoken");
+const push = require("./push");
 const { storeMessage, markDelivered, getOrCreateConversation } = require("./messages");
 
 const JWT_SECRET = process.env.JWT_SECRET || "change-me-in-production";
@@ -40,20 +41,37 @@ function setupWs(wss) {
           // Ack back to sender
           send(ws, { type: "ack", tempId: msg.tempId, messageId: stored.id });
 
-          // Deliver to recipient if online
-          const recipientWs = recipientOf(conversationId, user.id);
+          // Deliver to recipient if online, otherwise push
+          const recipientId = recipientIdOf(conversationId, user.id);
+          const recipientWs = recipientId ? online.get(recipientId) : null;
           if (recipientWs) {
             send(recipientWs, {
               type:           "message",
               id:             stored.id,
               conversationId: stored.conversation_id,
-              senderId:       stored.sender_id,
+              sender_id:      stored.sender_id,
               iv:             stored.iv,
               ciphertext:     stored.ciphertext,
               mediaId:        stored.media_id,
-              createdAt:      stored.created_at,
+              created_at:     stored.created_at,
             });
             markDelivered(stored.id);
+          } else if (recipientId) {
+            push.sendPush(recipientId, {
+              title: "deadp0et",
+              body:  "New encrypted message",
+            }).catch(() => {});
+          }
+          break;
+        }
+
+        case "typing": {
+          const { conversationId } = msg;
+          if (!conversationId) return;
+          const recipientId = recipientIdOf(conversationId, user.id);
+          const recipientWs = recipientId ? online.get(recipientId) : null;
+          if (recipientWs) {
+            send(recipientWs, { type: "typing", conversationId });
           }
           break;
         }
@@ -70,18 +88,16 @@ function send(ws, obj) {
   if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
 }
 
-// Find the other participant's ws for a conversation
-function recipientOf(conversationId, senderId) {
+// Return the other participant's userId for a conversation
+function recipientIdOf(conversationId, senderId) {
   const { getDb } = require("./db");
-  const db  = getDb();
-  const row = db.prepare("SELECT user1_id, user2_id FROM conversations WHERE id = ?").get(conversationId);
+  const row = getDb().prepare("SELECT user1_id, user2_id FROM conversations WHERE id = ?").get(conversationId);
   if (!row) return null;
-  const recipientId = row.user1_id === senderId ? row.user2_id : row.user1_id;
-  return online.get(recipientId) || null;
+  return row.user1_id === senderId ? row.user2_id : row.user1_id;
 }
 
 function isOnline(userId) {
   return online.has(userId);
 }
 
-module.exports = { setupWs, isOnline };
+module.exports = { setupWs, isOnline, recipientIdOf };

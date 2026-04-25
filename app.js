@@ -10,8 +10,12 @@ const App = (() => {
   let myKeyPair   = null;      // { publicKey: CryptoKey, privateKey: CryptoKey }
   let ws          = null;
   let activeConvId = null;
-  const sharedKeys = new Map(); // convId → AES-GCM CryptoKey
+  const sharedKeys  = new Map(); // convId → AES-GCM CryptoKey
   const peerPubKeys = new Map(); // userId → ECDH CryptoKey (public)
+
+  // Typing indicator state
+  let typingThrottle  = null;
+  let typingHideTimer = null;
 
   // ── DOM shorthand ────────────────────────────────────────────────
   const $ = id => document.getElementById(id);
@@ -258,6 +262,7 @@ const App = (() => {
     connectWs();
     loadConversations().then(() => showScreen("home"));
     setStatus("connected", myUsername);
+    registerPush();
   }
 
   function logout() {
@@ -279,8 +284,9 @@ const App = (() => {
       const msg = JSON.parse(e.data);
       switch (msg.type) {
         case "auth_ok": break;
-        case "ack": handleAck(msg); break;
+        case "ack":     handleAck(msg); break;
         case "message": await handleIncomingMessage(msg); break;
+        case "typing":  handleTyping(msg); break;
       }
     };
     ws.onclose = () => {
@@ -321,13 +327,44 @@ const App = (() => {
 
     // Append to open chat if it matches
     if (activeConvId === msg.conversationId) {
-      appendMessageEl({ ...msg, payload, incoming: true, isNew: true });
+      // Normalise field names: WS uses snake_case, fall back to old camelCase if present
+      appendMessageEl({
+        ...msg,
+        sender_id:  msg.sender_id  ?? msg.senderId,
+        created_at: msg.created_at ?? msg.createdAt,
+        payload,
+        incoming: true,
+        isNew:    true,
+      });
+      hideTypingIndicator();
       scrollChatBottom();
     } else {
       // Badge on the conversation item
       const item = document.querySelector(`[data-conv-id="${msg.conversationId}"]`);
       if (item) item.classList.add("has-unread");
     }
+  }
+
+  function handleTyping({ conversationId }) {
+    if (conversationId !== activeConvId) return;
+    const el = $("typing-indicator");
+    if (!el) return;
+    el.hidden = false;
+    clearTimeout(typingHideTimer);
+    typingHideTimer = setTimeout(hideTypingIndicator, 3000);
+  }
+
+  function hideTypingIndicator() {
+    const el = $("typing-indicator");
+    if (el) el.hidden = true;
+    clearTimeout(typingHideTimer);
+  }
+
+  function sendTypingEvent() {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !activeConvId) return;
+    if (typingThrottle) return;
+    ws.send(JSON.stringify({ type: "typing", conversationId: activeConvId }));
+    typingThrottle = setTimeout(() => { typingThrottle = null; }, 3000);
   }
 
   // ── Conversations ────────────────────────────────────────────────
@@ -385,6 +422,7 @@ const App = (() => {
 
     showScreen("chat");
     $("chat-messages").innerHTML = "";
+    hideTypingIndicator();
     $("chat-input").focus();
 
     // Load message history
@@ -441,6 +479,7 @@ const App = (() => {
 
     input.value = "";
     autoResize(input);
+    clearTimeout(typingThrottle); typingThrottle = null;
 
     const payload = { text: text || "" };
     let mediaUploadId = null;
@@ -738,6 +777,44 @@ const App = (() => {
     setAuthError("");
   }
 
+  // ── Push notifications ───────────────────────────────────────────
+
+  async function registerPush() {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    try {
+      const reg = await navigator.serviceWorker.register("/sw.js");
+
+      const keyRes = await apiFetch("/api/push/vapid-public-key");
+      const { publicKey } = await keyRes.json();
+      if (!publicKey) return;
+
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") return;
+
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey),
+        });
+      }
+
+      await apiFetch("/api/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sub.toJSON()),
+      });
+    } catch (e) {
+      console.warn("[push]", e);
+    }
+  }
+
+  function urlBase64ToUint8Array(b64) {
+    const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+    const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+  }
+
   // ── Init ─────────────────────────────────────────────────────────
 
   async function init() {
@@ -828,7 +905,7 @@ const App = (() => {
     chatInput.addEventListener("keydown", e => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     });
-    chatInput.addEventListener("input", () => autoResize(chatInput));
+    chatInput.addEventListener("input", () => { autoResize(chatInput); sendTypingEvent(); });
 
     $("btn-send").addEventListener("click", sendMessage);
 

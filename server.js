@@ -7,6 +7,7 @@ const { register, login, requireAuth, searchUsers, getPublicKey } = require("./b
 const { getOrCreateConversation, listConversations, getMessages }  = require("./backend/messages");
 const { uploadMedia, downloadMedia }                               = require("./backend/media");
 const { setupWs }                                                  = require("./backend/ws");
+const { getPublicKey: getVapidKey, saveSubscription }              = require("./backend/push");
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
@@ -20,6 +21,8 @@ const MIME = {
   ".svg":  "image/svg+xml",
   ".ico":  "image/x-icon",
 };
+
+const STATIC_FILES = ["/index.html", "/app.js", "/styles.css", "/logo.svg", "/sw.js"];
 
 function serveStatic(res, urlPath) {
   const filePath = path.join(__dirname, urlPath.replace(/\.\./g, ""));
@@ -130,11 +133,21 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (pathname === "/api/push/vapid-public-key" && method === "GET") {
+    return json(res, 200, { publicKey: getVapidKey() });
+  }
+
+  if (pathname === "/api/push/subscribe" && method === "POST") {
+    const sub = await readJson(req);
+    if (!sub?.endpoint) return json(res, 400, { error: "Invalid subscription." });
+    saveSubscription(user.id, sub);
+    return json(res, 200, { ok: true });
+  }
+
   // ── Static files ───────────────────────────────────────────────
 
   let filePath = pathname === "/" ? "/index.html" : pathname;
-  // Only serve known static files
-  if (["/index.html", "/app.js", "/styles.css", "/logo.svg"].includes(filePath)) {
+  if (STATIC_FILES.includes(filePath)) {
     return serveStatic(res, filePath);
   }
 

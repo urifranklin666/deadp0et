@@ -9,6 +9,7 @@ COPY package.json ./
 RUN npm install --omit=dev
 
 COPY server.js ./
+COPY sw.js ./
 COPY index.html ./
 COPY app.js ./
 COPY styles.css ./
