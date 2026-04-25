@@ -321,7 +321,7 @@ const App = (() => {
 
     // Append to open chat if it matches
     if (activeConvId === msg.conversationId) {
-      appendMessageEl({ ...msg, payload, incoming: true });
+      appendMessageEl({ ...msg, payload, incoming: true, isNew: true });
       scrollChatBottom();
     } else {
       // Badge on the conversation item
@@ -484,6 +484,7 @@ const App = (() => {
       incoming:       false,
       created_at:     Math.floor(now / 1000),
       tempId,
+      isNew:          true,
     });
     scrollChatBottom();
 
@@ -549,12 +550,35 @@ const App = (() => {
     if (btn) btn.disabled = on;
   }
 
-  function appendMessageEl({ id, sender_id, payload, incoming, created_at, tempId }) {
+  function appendMessageEl({ id, sender_id, payload, incoming, created_at, tempId, isNew = false }) {
     const list = $("chat-messages");
     if (!list) return;
 
+    // Grouped message detection: same sender within 60 seconds
+    const prev    = list.lastElementChild;
+    const grouped = prev &&
+      !prev.classList.contains("msg-system") &&
+      prev.dataset.senderId === String(sender_id) &&
+      (created_at - parseInt(prev.dataset.ts || 0, 10)) < 60;
+
+    if (grouped) {
+      const hasStart = prev.classList.contains("msg-group-start");
+      const hasMid   = prev.classList.contains("msg-group-mid");
+      const hasEnd   = prev.classList.contains("msg-group-end");
+      if (!hasStart && !hasMid && !hasEnd) {
+        prev.classList.add("msg-group-start");
+      } else if (hasEnd) {
+        prev.classList.remove("msg-group-end");
+        if (!hasStart) prev.classList.add("msg-group-mid");
+      }
+    }
+
     const wrap = document.createElement("div");
     wrap.className = `msg ${incoming ? "msg-them" : "msg-me"}`;
+    wrap.dataset.senderId = String(sender_id);
+    wrap.dataset.ts       = String(created_at);
+    if (grouped) wrap.classList.add("msg-group-end");
+    if (isNew)   wrap.classList.add("entering");
     if (tempId) wrap.dataset.temp = tempId;
     if (id)     wrap.dataset.id   = id;
 

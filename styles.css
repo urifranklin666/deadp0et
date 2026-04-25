@@ -31,6 +31,28 @@
   --radius-pill:999px;
   --header-h:   52px;
   --font-mono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+
+  /* ── Extended surface tokens ──── */
+  --bg-sunken:     #060606;
+  --bg-elevated:   #161616;
+  --bg-card-2:     #141414;
+  --red-wash:      rgba(204,0,0,0.06);
+  --border-subtle: rgba(42,0,0,0.4);
+  --green-dim:     rgba(0,204,68,0.4);
+  /* type scale */
+  --text-xs:   0.625rem;
+  --text-sm:   0.75rem;
+  --text-base: 0.9375rem;
+  --text-md:   1.0625rem;
+  --text-lg:   1.25rem;
+  --text-xl:   2.125rem;
+  /* spacing */
+  --sp-1: 4px;  --sp-2: 8px;   --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 20px;  --sp-6: 24px;
+  /* shadows */
+  --shadow-header: 0 2px 24px rgba(0,0,0,0.75);
+  --shadow-input:  0 -2px 20px rgba(0,0,0,0.55);
+  --shadow-bubble: 0 2px 8px rgba(0,0,0,0.35);
 }
 
 /* ── Reset ─────────────────────────────────────────────────────── */
@@ -84,7 +106,7 @@ body {
 .app-shell {
   position: relative; z-index: 1;
   display: flex; flex-direction: column;
-  height: 100dvh; height: 100vh;
+  height: 100vh; height: 100dvh;
   width: min(480px, 100vw);
   margin: 0 auto;
   box-shadow: 0 0 0 1px var(--border), 0 0 80px rgba(204,0,0,0.07);
@@ -101,6 +123,7 @@ body {
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-header);
 }
 
 .app-header-inner {
@@ -218,14 +241,16 @@ body {
 
 /* ── Neon flicker ──────────────────────────────────────────────── */
 @keyframes neonFlicker {
-  0%, 91%, 100% {
+  0%,19%,21%,25%,54%,56%,91%,100% {
     text-shadow: 0 0 6px rgba(255,34,34,0.8), 0 0 20px rgba(255,34,34,0.5), 0 0 50px rgba(204,0,0,0.3);
     opacity: 1;
   }
-  92%  { opacity: 0.82; text-shadow: 0 0 2px rgba(255,34,34,0.4); }
-  93%  { opacity: 1;    text-shadow: 0 0 6px rgba(255,34,34,0.8), 0 0 20px rgba(255,34,34,0.5); }
-  95%  { opacity: 0.88; }
-  96%  { opacity: 1; }
+  20%,24% { opacity: 0;    text-shadow: none; }
+  55%     { opacity: 0;    text-shadow: none; }
+  92%     { opacity: 0.82; text-shadow: 0 0 2px rgba(255,34,34,0.4); }
+  93%     { opacity: 1;    text-shadow: 0 0 6px rgba(255,34,34,0.8), 0 0 20px rgba(255,34,34,0.5); }
+  95%     { opacity: 0.88; }
+  96%     { opacity: 1; }
 }
 
 /* ── Screen system ─────────────────────────────────────────────── */
@@ -464,6 +489,7 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .btn-ghost {
   padding: 8px 12px; font-size: 0.78rem; font-weight: 500;
+  min-height: 44px;
   background: transparent; color: var(--text-dim);
   border: 1px solid var(--border);
 }
@@ -471,7 +497,7 @@ button { -webkit-tap-highlight-color: transparent; }
   color: var(--text); border-color: var(--border-med);
 }
 
-.btn-sm { padding: 7px 13px; font-size: 0.78rem; }
+.btn-sm { padding: 7px 13px; font-size: 0.78rem; min-height: 44px; }
 .btn-block { width: 100%; }
 .btn-cancel { margin-top: 6px; color: rgba(130,0,0,0.7); border-color: transparent; }
 .btn-cancel:hover { color: var(--red-bright); border-color: var(--border); }
@@ -629,6 +655,8 @@ button:focus-visible { outline: 2px solid var(--red-dim); outline-offset: 2px; }
   padding: 14px 14px 8px;
   display: flex; flex-direction: column; gap: 5px;
   scroll-behavior: smooth;
+  background: var(--bg-sunken);
+  overscroll-behavior: contain;
 }
 .chat-messages::-webkit-scrollbar { width: 3px; }
 .chat-messages::-webkit-scrollbar-track { background: transparent; }
@@ -678,6 +706,21 @@ button:focus-visible { outline: 2px solid var(--red-dim); outline-offset: 2px; }
   font-family: var(--font-mono);
 }
 
+/* ── Message grouping ──────────────────────────────────────────── */
+.msg-group-mid,
+.msg-group-end { margin-top: 2px; }
+
+/* hide timestamp on all but the last bubble of a group */
+.msg-group-start .msg-footer,
+.msg-group-mid   .msg-footer { display: none; }
+
+/* ── Message enter animation ───────────────────────────────────── */
+@keyframes msgEnter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.msg.entering { animation: msgEnter 0.2s ease-out forwards; }
+
 /* ── Chat input area ───────────────────────────────────────────── */
 .chat-input-area {
   flex-shrink: 0;
@@ -689,6 +732,7 @@ button:focus-visible { outline: 2px solid var(--red-dim); outline-offset: 2px; }
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   position: relative;
+  box-shadow: var(--shadow-input);
 }
 
 /* subtle encrypted label over input */
@@ -795,7 +839,7 @@ button:focus-visible { outline: 2px solid var(--red-dim); outline-offset: 2px; }
   overflow: hidden;
 }
 .auth-tab {
-  flex: 1; padding: 9px;
+  flex: 1; padding: 9px; min-height: 44px;
   background: transparent; border: none;
   font-size: 0.82rem; font-weight: 600;
   font-family: var(--font-mono); letter-spacing: 0.06em;
@@ -827,7 +871,7 @@ button:focus-visible { outline: 2px solid var(--red-dim); outline-offset: 2px; }
   background: rgba(6,6,6,0.9);
   border: 1px solid var(--border-med);
   color: var(--text-bright);
-  font-size: 0.95rem; font-family: inherit;
+  font-size: 1rem; font-family: inherit;
   outline: none;
   clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px));
   transition: border-color 0.2s;
@@ -958,6 +1002,7 @@ button:focus-visible { outline: 2px solid var(--red-dim); outline-offset: 2px; }
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   background: rgba(10,10,10,0.97);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5);
 }
 .chat-peer-info { flex: 1; min-width: 0; }
 .chat-peer-name {
@@ -992,7 +1037,7 @@ button:focus-visible { outline: 2px solid var(--red-dim); outline-offset: 2px; }
 
 /* Attach button */
 .btn-attach {
-  flex-shrink: 0; width: 36px; height: 36px;
+  flex-shrink: 0; width: 44px; height: 44px;
   display: flex; align-items: center; justify-content: center;
   background: transparent; border: 1px solid var(--border);
   color: var(--text-dim); cursor: pointer;
@@ -1048,7 +1093,11 @@ button:focus-visible { outline: 2px solid var(--red-dim); outline-offset: 2px; }
   border: 1px solid var(--border-med);
   padding: 20px;
   clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
-  animation: screenIn 0.18s ease;
+  animation: modalIn 0.22s ease-out;
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 .modal-box::after {
   content: '';
