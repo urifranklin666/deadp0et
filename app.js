@@ -818,22 +818,7 @@ const App = (() => {
   // ── Init ─────────────────────────────────────────────────────────
 
   async function init() {
-    // Try session restore
-    const saved = sessionStorage.getItem("dp_session");
-    if (saved) {
-      try {
-        const s = JSON.parse(saved);
-        // Session exists but private key is not in sessionStorage (it can't be serialized)
-        // Show a re-auth prompt to re-derive the key
-        jwt = s.jwt; myUserId = s.myUserId; myUsername = s.myUsername;
-        showScreen("unlock");
-        $("unlock-username").textContent = myUsername;
-        return;
-      } catch { sessionStorage.removeItem("dp_session"); }
-    }
-
-    setStatus("offline", "e2e encrypted");
-    showScreen("auth");
+    // ── Wire up all event listeners unconditionally ───────────────
 
     // Auth form
     $("auth-toggle-login").addEventListener("click", () => setAuthMode("login"));
@@ -850,7 +835,7 @@ const App = (() => {
       $(id).addEventListener("keydown", e => { if (e.key === "Enter") $("btn-auth-submit").click(); });
     });
 
-    // Unlock screen (session restore — re-derive key from password)
+    // Unlock screen
     $("btn-unlock").addEventListener("click", async () => {
       const password = $("unlock-password").value;
       $("btn-unlock").disabled = true;
@@ -875,6 +860,7 @@ const App = (() => {
         await loadConversations();
         showScreen("home");
         setStatus("connected", myUsername);
+        registerPush();
       } catch { $("unlock-error").textContent = "Failed. Try again."; $("unlock-error").hidden = false; }
       finally  { $("btn-unlock").disabled = false; }
     });
@@ -926,6 +912,22 @@ const App = (() => {
       const f = e.dataTransfer.files[0];
       if (f) handleFileSelected(f);
     });
+
+    // ── Determine initial screen ──────────────────────────────────
+
+    const saved = sessionStorage.getItem("dp_session");
+    if (saved) {
+      try {
+        const s = JSON.parse(saved);
+        jwt = s.jwt; myUserId = s.myUserId; myUsername = s.myUsername;
+        $("unlock-username").textContent = myUsername;
+        showScreen("unlock");
+        return;
+      } catch { sessionStorage.removeItem("dp_session"); }
+    }
+
+    setStatus("offline", "e2e encrypted");
+    showScreen("auth");
   }
 
   return { init };
