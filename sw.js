@@ -1,4 +1,4 @@
-const CACHE    = "deadp0et-v1";
+const CACHE    = "deadp0et-v2";
 const PRECACHE = ["/", "/app.js", "/styles.css", "/logo.svg"];
 
 self.addEventListener("install", e => {
